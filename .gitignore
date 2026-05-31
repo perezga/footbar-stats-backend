@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+.env.local
+
+# Local SQLite cache (contains OAuth tokens) — never commit
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
+
+# Self-signed dev TLS cert/key — regenerate with `npm run cert`
+certs/*.pem
+certs/*.key
+
+*.log
+.DS_Store
