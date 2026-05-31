@@ -85,16 +85,15 @@ All `/api/*` routes require an authenticated session cookie (set by the OAuth fl
 |---|---|---|
 | `GET` | `/auth/login` | Start the OAuth flow (redirects to Footbar) |
 | `GET` | `/auth/callback` | OAuth redirect target; exchanges code, sets session cookie |
-| `GET` | `/auth/me` | Current session info |
-| `GET` | `/auth/logout` | Clear the session |
+| `GET` | `/auth/status` | Whether the current session is authenticated |
+| `POST` | `/auth/logout` | Clear the session |
 
 ### Data
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/profile` | Cached profile (24h TTL) |
-| `GET` | `/api/profile/refresh` | Force-refresh profile from Footbar |
 | `GET` | `/api/sessions` | Cached session list (1h TTL) |
-| `GET` | `/api/sessions/refresh` | Force-refresh the session list |
+| `POST` | `/api/sessions/refresh` | Force-refresh the session list from Footbar |
 | `GET` | `/api/sessions/:id` | Session detail (cached forever once fetched) |
 | `GET` | `/api/stats/records` | Personal records, computed in SQL |
 | `GET` | `/api/stats/trends` | Trends over time, computed in SQL |
