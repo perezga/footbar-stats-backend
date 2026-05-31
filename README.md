@@ -80,6 +80,38 @@ docker compose up --build
 
 `HOST` is overridden to `0.0.0.0` in the container so the published port is reachable, and port `4000` is published on the host. The frontend reaches the backend through the host (`host.docker.internal:4000`), so no shared network is needed. Source is bind-mounted, so `tsx watch` still hot-reloads.
 
+### LAN access (reach the app from another machine by IP)
+
+By default everything is bound to `localhost`. To let another machine on your
+network use the app via the server's IP (e.g. `192.168.31.131`):
+
+1. **Register a new Redirect URI** in your Footbar app: `https://<SERVER_IP>:4000/auth/callback`.
+2. **Generate a cert that includes the IP** (the default cert only covers `localhost`):
+   ```bash
+   rm -f certs/*.pem
+   npm run cert -- <SERVER_IP>
+   ```
+3. **Point the OAuth redirect and frontend origin at the IP**, then start:
+   ```bash
+   export FOOTBAR_CLIENT_ID="…" FOOTBAR_CLIENT_SECRET="…" COOKIE_SECRET="…"
+   export REDIRECT_URI="https://<SERVER_IP>:4000/auth/callback"
+   export FRONTEND_ORIGIN="http://<SERVER_IP>:5173"
+   docker compose up --build
+   ```
+4. **Open the firewall** for both ports (example for firewalld):
+   ```bash
+   sudo firewall-cmd --permanent --add-port=4000/tcp
+   sudo firewall-cmd --permanent --add-port=5173/tcp
+   sudo firewall-cmd --reload
+   ```
+
+From the remote machine, first open `https://<SERVER_IP>:4000/health` once and
+accept the self-signed cert, then browse to `http://<SERVER_IP>:5173`.
+
+> ⚠️ This exposes the app to your whole LAN with a self-signed cert and no app
+> login of its own — anyone on the network can use your Footbar session. Fine for
+> a trusted home network; don't expose it more broadly.
+
 ## API
 
 All `/api/*` routes require an authenticated session cookie (set by the OAuth flow).

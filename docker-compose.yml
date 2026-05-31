@@ -20,6 +20,11 @@ services:
       FOOTBAR_CLIENT_SECRET: ${FOOTBAR_CLIENT_SECRET:?set FOOTBAR_CLIENT_SECRET in your environment}
       COOKIE_SECRET: ${COOKIE_SECRET:?set COOKIE_SECRET in your environment}
       HOST: 0.0.0.0                # bind all interfaces so the port is reachable
+      # Default to localhost; override (e.g. with the server's LAN IP) to allow
+      # access from another machine. Must match the Redirect URI registered with
+      # Footbar. See "LAN access" in the README.
+      REDIRECT_URI: ${REDIRECT_URI:-https://localhost:4000/auth/callback}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
     ports:
       - "4000:4000"                # published so the browser OAuth callback works
     volumes:
