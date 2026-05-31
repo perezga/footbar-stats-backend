@@ -1,17 +1,17 @@
-# Backend only. Run from the backend/ directory:
+# Backend only. Run from this directory:
 #   docker network create footbar-net   # once, shared with the frontend
 #   cp .env.example .env                 # fill in your Footbar credentials
 #   docker compose up --build
 #
-# Requires TLS certs at backend/certs/ (npm run cert -w backend).
+# Requires TLS certs at ./certs (npm run cert).
 
 services:
   backend:
     build:
-      context: ..                  # repo root — workspace deps are hoisted there
-      dockerfile: backend/Dockerfile
+      context: .
+      dockerfile: Dockerfile
     container_name: footbar-backend
-    command: npm run dev -w backend
+    command: npm run dev
     env_file:
       - .env                       # FOOTBAR_CLIENT_ID / _SECRET / COOKIE_SECRET
     environment:
@@ -19,9 +19,8 @@ services:
     ports:
       - "4000:4000"                # published so the browser OAuth callback works
     volumes:
-      - ..:/app                    # live source for tsx watch
+      - .:/app                     # live source for tsx watch
       - /app/node_modules          # keep the image's installed deps (native build)
-      - /app/backend/node_modules
     networks:
       default:
         aliases:
