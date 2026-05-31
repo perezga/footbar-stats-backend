@@ -37,11 +37,18 @@ This writes `certs/cert.pem` and `certs/key.pem` (both gitignored). The first ti
 
 ### 3. Configure environment
 
-Copy the example file and fill in your credentials:
+The three secrets are read from your shell environment. Export them (e.g. in
+your `.bashrc`/`.profile` or via direnv):
 
 ```bash
-cp .env.example .env
+export FOOTBAR_CLIENT_ID="your-client-id"
+export FOOTBAR_CLIENT_SECRET="your-client-secret"
+export COOKIE_SECRET="$(openssl rand -hex 32)"
 ```
+
+For native dev (`npm run dev`) a `.env` file is also picked up if you prefer one
+(`cp .env.example .env`). The Docker setup, however, reads **only** from the
+exported environment variables — see [Run with Docker](#run-with-docker).
 
 | Variable | Required | Default | Notes |
 |---|:---:|---|---|
@@ -53,8 +60,6 @@ cp .env.example .env
 | `PORT` | | `4000` | |
 | `HOST` | | `127.0.0.1` | Set to `0.0.0.0` in containers |
 
-A `.env` file is loaded automatically; you can also export the vars in your shell.
-
 ### 4. Run
 
 ```bash
@@ -65,11 +70,11 @@ The server listens on <https://localhost:4000>. Health check: `GET /health` → 
 
 ## Run with Docker
 
-The frontend and backend each have their own compose file and talk over a shared external network:
+The frontend and backend each have their own compose file and talk over a shared external network. Compose reads the three secrets from your **exported** shell environment (`${FOOTBAR_CLIENT_ID}`, `${FOOTBAR_CLIENT_SECRET}`, `${COOKIE_SECRET}`) — if any is unset, `docker compose up` fails fast with a clear message:
 
 ```bash
 docker network create footbar-net   # once, shared with the frontend
-cp .env.example .env                 # fill in your credentials
+export FOOTBAR_CLIENT_ID="…" FOOTBAR_CLIENT_SECRET="…" COOKIE_SECRET="…"
 npm run cert                         # if certs/ don't exist yet
 docker compose up --build
 ```

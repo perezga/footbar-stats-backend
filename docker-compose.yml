@@ -1,9 +1,10 @@
 # Backend only. Run from this directory:
 #   docker network create footbar-net   # once, shared with the frontend
-#   cp .env.example .env                 # fill in your Footbar credentials
+#   export FOOTBAR_CLIENT_ID=… FOOTBAR_CLIENT_SECRET=… COOKIE_SECRET=…
 #   docker compose up --build
 #
-# Requires TLS certs at ./certs (npm run cert).
+# Secrets are read from your shell environment (see below). Requires TLS certs
+# at ./certs (npm run cert).
 
 services:
   backend:
@@ -12,9 +13,11 @@ services:
       dockerfile: Dockerfile
     container_name: footbar-backend
     command: npm run dev
-    env_file:
-      - .env                       # FOOTBAR_CLIENT_ID / _SECRET / COOKIE_SECRET
     environment:
+      # Passed through from your shell — compose substitutes ${VAR} at `up`.
+      FOOTBAR_CLIENT_ID: ${FOOTBAR_CLIENT_ID:?set FOOTBAR_CLIENT_ID in your environment}
+      FOOTBAR_CLIENT_SECRET: ${FOOTBAR_CLIENT_SECRET:?set FOOTBAR_CLIENT_SECRET in your environment}
+      COOKIE_SECRET: ${COOKIE_SECRET:?set COOKIE_SECRET in your environment}
       HOST: 0.0.0.0                # bind all interfaces so the port is reachable
     ports:
       - "4000:4000"                # published so the browser OAuth callback works
