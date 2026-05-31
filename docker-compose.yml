@@ -1,10 +1,11 @@
 # Backend only. Run from this directory:
-#   docker network create footbar-net   # once, shared with the frontend
 #   export FOOTBAR_CLIENT_ID=… FOOTBAR_CLIENT_SECRET=… COOKIE_SECRET=…
 #   docker compose up --build
 #
-# Secrets are read from your shell environment (see below). Requires TLS certs
-# at ./certs (npm run cert).
+# Fully self-contained: uses its own default network and publishes port 4000 on
+# the host, so the frontend can reach it via host.docker.internal — no shared
+# network needed. Secrets come from your shell env (below); TLS certs from
+# ./certs (npm run cert).
 
 services:
   backend:
@@ -24,12 +25,3 @@ services:
     volumes:
       - .:/app                     # live source for tsx watch
       - /app/node_modules          # keep the image's installed deps (native build)
-    networks:
-      default:
-        aliases:
-          - backend                # frontend proxies to https://backend:4000
-
-networks:
-  default:
-    name: footbar-net
-    external: true

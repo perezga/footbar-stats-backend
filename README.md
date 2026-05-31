@@ -70,16 +70,15 @@ The server listens on <https://localhost:4000>. Health check: `GET /health` → 
 
 ## Run with Docker
 
-The frontend and backend each have their own compose file and talk over a shared external network. Compose reads the three secrets from your **exported** shell environment (`${FOOTBAR_CLIENT_ID}`, `${FOOTBAR_CLIENT_SECRET}`, `${COOKIE_SECRET}`) — if any is unset, `docker compose up` fails fast with a clear message:
+The backend is fully self-contained — its own default network, no shared network setup. Compose reads the three secrets from your **exported** shell environment (`${FOOTBAR_CLIENT_ID}`, `${FOOTBAR_CLIENT_SECRET}`, `${COOKIE_SECRET}`) — if any is unset, `docker compose up` fails fast with a clear message:
 
 ```bash
-docker network create footbar-net   # once, shared with the frontend
 export FOOTBAR_CLIENT_ID="…" FOOTBAR_CLIENT_SECRET="…" COOKIE_SECRET="…"
 npm run cert                         # if certs/ don't exist yet
 docker compose up --build
 ```
 
-`HOST` is overridden to `0.0.0.0` in the container so the published port is reachable, and the frontend reaches this service by the network alias `backend` (`https://backend:4000`). Source is bind-mounted, so `tsx watch` still hot-reloads.
+`HOST` is overridden to `0.0.0.0` in the container so the published port is reachable, and port `4000` is published on the host. The frontend reaches the backend through the host (`host.docker.internal:4000`), so no shared network is needed. Source is bind-mounted, so `tsx watch` still hot-reloads.
 
 ## API
 
