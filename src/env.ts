@@ -27,6 +27,8 @@ const Env = z.object({
   RFAF_CODEQUIPO: z.coerce.number().int().positive().default(817922),
   /** Substring used to flag the tracked player in the scorers table. */
   RFAF_OWN_PLAYER: z.string().default('PEREZ GARCIA, ERIK'),
+  /** Team name used to decide which side of a fixture is ours. */
+  RFAF_OWN_TEAM: z.string().default('ATLETICO ESTACION'),
 });
 
 const parsed = Env.safeParse(process.env);

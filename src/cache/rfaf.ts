@@ -19,7 +19,7 @@ function fixturesUrl(): string {
 }
 
 /** Normalize a name for tolerant matching (drop accents/punctuation/case). */
-function norm(s: string): string {
+export function norm(s: string): string {
   // NFD splits accents into combining marks; stripping non-alphanumerics drops them.
   return s.normalize('NFD').replace(/[^a-z0-9]/gi, '').toUpperCase();
 }
