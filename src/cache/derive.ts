@@ -13,10 +13,16 @@ interface DetailRow {
   detail_data: string;
 }
 
-function allDetails(): SessionAPI[] {
-  const rows = db
-    .prepare('SELECT detail_data FROM sessions WHERE detail_data IS NOT NULL')
-    .all() as DetailRow[];
+function allDetails(matchType?: string): SessionAPI[] {
+  const rows = (
+    matchType
+      ? db
+          .prepare(
+            'SELECT detail_data FROM sessions WHERE detail_data IS NOT NULL AND match_type = ?',
+          )
+          .all(matchType)
+      : db.prepare('SELECT detail_data FROM sessions WHERE detail_data IS NOT NULL').all()
+  ) as DetailRow[];
   return rows.map((r) => JSON.parse(r.detail_data) as SessionAPI);
 }
 
@@ -31,8 +37,8 @@ const RECORD_METRICS: { key: keyof SessionAPI; label: string }[] = [
   { key: 'playing_time', label: 'Longest playing time' },
 ];
 
-export function computeRecords(): RecordEntry[] {
-  const details = allDetails();
+export function computeRecords(matchType?: string): RecordEntry[] {
+  const details = allDetails(matchType);
   if (details.length === 0) return [];
   const out: RecordEntry[] = [];
   for (const { key, label } of RECORD_METRICS) {
@@ -92,8 +98,8 @@ export interface TrendPoint {
   value: number;
 }
 
-export function computeTrend(metric: TrendMetric, limit = 30): TrendPoint[] {
-  const details = allDetails()
+export function computeTrend(metric: TrendMetric, limit = 30, matchType?: string): TrendPoint[] {
+  const details = allDetails(matchType)
     .filter((s) => typeof (s as unknown as Record<string, unknown>)[metric] === 'number')
     .sort((a, b) => a.start_date.localeCompare(b.start_date));
   const recent = details.slice(-limit);
