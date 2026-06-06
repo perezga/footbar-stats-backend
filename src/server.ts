@@ -8,6 +8,7 @@ import { env } from './env.js';
 import './db.js';
 import { authRoutes } from './routes/auth.js';
 import { profileRoutes } from './routes/profile.js';
+import { rfafRoutes } from './routes/rfaf.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { statsRoutes } from './routes/stats.js';
 
@@ -43,6 +44,7 @@ await app.register(authRoutes);
 await app.register(profileRoutes);
 await app.register(sessionRoutes);
 await app.register(statsRoutes);
+await app.register(rfafRoutes);
 
 app.get('/health', async () => ({ ok: true }));
 

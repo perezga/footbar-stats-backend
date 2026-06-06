@@ -18,6 +18,15 @@ const Env = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
   HOST: z.string().default('127.0.0.1'),
   COOKIE_SECRET: z.string().min(16, 'COOKIE_SECRET must be at least 16 chars'),
+
+  // RFAF league/competition identifiers (defaults track ATLÉTICO ESTACIÓN "A").
+  RFAF_COD_PRIMARIA_CLASIF: z.string().default('1000120'),
+  RFAF_COD_PRIMARIA_GRUPO: z.string().default('1000123'),
+  RFAF_CODCOMPETICION: z.string().default('44788581'),
+  RFAF_CODGRUPO: z.string().default('46734797'),
+  RFAF_CODEQUIPO: z.coerce.number().int().positive().default(817922),
+  /** Substring used to flag the tracked player in the scorers table. */
+  RFAF_OWN_PLAYER: z.string().default('PEREZ GARCIA, ERIK'),
 });
 
 const parsed = Env.safeParse(process.env);
