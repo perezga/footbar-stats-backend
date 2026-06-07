@@ -145,6 +145,37 @@ export async function getSessionDetail(id: number): Promise<SessionAPI> {
   return fresh;
 }
 
+/**
+ * Force a fresh fetch of one session: drop the cached detail, re-fetch it, and
+ * sync the list metadata (start_date/match_type/…) from the fresh result so a
+ * session that was later reclassified/retimed in Footbar is fully corrected.
+ */
+export async function refreshSessionDetail(id: number): Promise<SessionAPI> {
+  db.prepare('UPDATE sessions SET detail_data = NULL, detail_fetched_at = NULL WHERE id = ?').run(id);
+  const fresh = await getSessionDetail(id); // detail_data is null -> re-fetches and stores
+  db.prepare(
+    `UPDATE sessions SET start_date = @start_date, match_type = @match_type,
+       position = @position, list_data = @list_data WHERE id = @id`,
+  ).run({
+    id: fresh.id,
+    start_date: fresh.start_date,
+    match_type: fresh.match_type,
+    position: fresh.position ?? null,
+    list_data: JSON.stringify({
+      id: fresh.id,
+      start_date: fresh.start_date,
+      stop_date: fresh.stop_date,
+      title: fresh.title,
+      location: fresh.location,
+      match_type: fresh.match_type,
+      position: fresh.position,
+      score_stars: fresh.score_stars,
+      tracker_data: fresh.tracker_data,
+    }),
+  });
+  return fresh;
+}
+
 export function allCachedDetails(): SessionAPI[] {
   const rows = db
     .prepare('SELECT detail_data FROM sessions WHERE detail_data IS NOT NULL')

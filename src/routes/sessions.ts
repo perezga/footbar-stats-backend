@@ -5,6 +5,7 @@ import {
   getLastSync,
   getSessionDetail,
   listSessions,
+  refreshSessionDetail,
 } from '../cache/sessions.js';
 import type { Fixture } from '../rfaf/types.js';
 import type { MatchType } from '../footbar/types.js';
@@ -73,6 +74,21 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       return { error: 'Invalid id' };
     }
     const detail = await getSessionDetail(id);
+    const index = await safeFixtureIndex(app);
+    return enrichSession(detail, index);
+  });
+
+  app.post<{ Params: { id: string } }>('/api/sessions/:id/refresh', async (req, reply) => {
+    if (currentUserId(req) === null) {
+      reply.code(401);
+      return { error: 'Not authenticated' };
+    }
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      reply.code(400);
+      return { error: 'Invalid id' };
+    }
+    const detail = await refreshSessionDetail(id);
     const index = await safeFixtureIndex(app);
     return enrichSession(detail, index);
   });
