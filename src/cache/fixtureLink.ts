@@ -62,11 +62,17 @@ export async function buildFixtureIndex(): Promise<Map<string, Fixture>> {
   return index;
 }
 
+/** Display name for a matched fixture, e.g. `HOME vs AWAY`. */
+function fixtureName(f: Fixture): string {
+  return `${f.home} vs ${f.away}`;
+}
+
 /**
  * Attach the matching fixture to a Game session (same calendar day). The fixture
- * is the source of truth for the match result; presentation layers prefer it.
+ * is the source of truth for the match: its result is attached and its name
+ * overwrites the session title.
  */
-export function enrichSession<T extends { start_date: string; match_type: string }>(
+export function enrichSession<T extends { start_date: string; match_type: string; title: string }>(
   session: T,
   index: Map<string, Fixture>,
 ): T & { fixture?: SessionFixture } {
@@ -74,5 +80,5 @@ export function enrichSession<T extends { start_date: string; match_type: string
   const key = madridDateKey(session.start_date);
   const fixture = key ? index.get(key) : undefined;
   if (!fixture) return session;
-  return { ...session, fixture: toSessionFixture(fixture) };
+  return { ...session, title: fixtureName(fixture), fixture: toSessionFixture(fixture) };
 }
