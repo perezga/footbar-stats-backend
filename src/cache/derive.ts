@@ -75,7 +75,10 @@ export type TrendMetric =
   | 'pass_count'
   | 'activity'
   | 'playing_time'
-  | 'hsr_plus';
+  | 'hsr_plus'
+  | 'time_running'
+  | 'run_count'
+  | 'dribble_count';
 
 export const TREND_METRICS: TrendMetric[] = [
   'distance',
@@ -89,6 +92,9 @@ export const TREND_METRICS: TrendMetric[] = [
   'activity',
   'playing_time',
   'hsr_plus',
+  'time_running',
+  'run_count',
+  'dribble_count',
 ];
 
 export interface TrendPoint {
@@ -96,6 +102,64 @@ export interface TrendPoint {
   start_date: string;
   title: string;
   value: number;
+}
+
+/** Metrics averaged for the session-vs-average comparison (the detail tiles). */
+export const AVERAGE_METRICS = [
+  'distance',
+  'playing_time',
+  'sprint_count',
+  'sprint_speed',
+  'avg_sprint_speed',
+  'shot_count',
+  'shot_speed',
+  'avg_shot_speed',
+  'pass_count',
+  'activity',
+  'hsr_plus',
+  'time_with_ball',
+  'acceleration',
+  'stop_and_go',
+  'run_count',
+  'time_running',
+  'dribble_count',
+] as const;
+export type AverageMetric = (typeof AVERAGE_METRICS)[number];
+
+export interface MetricAverage {
+  mean: number;
+  /** Sessions where the metric was present; nullable metrics carry their own n. */
+  n: number;
+}
+
+/**
+ * Per-metric mean over the player's most recent `window` sessions of the same
+ * match type, excluding the session being compared. Only sessions whose detail
+ * is already cached enter the pool (details are fetched lazily on first open).
+ */
+export function computeAverages(
+  matchType?: string,
+  excludeId?: number,
+  window = 10,
+): { count: number; averages: Partial<Record<AverageMetric, MetricAverage>> } {
+  const pool = allDetails(matchType)
+    .filter((s) => s.id !== excludeId)
+    .sort((a, b) => b.start_date.localeCompare(a.start_date))
+    .slice(0, window);
+  const averages: Partial<Record<AverageMetric, MetricAverage>> = {};
+  for (const key of AVERAGE_METRICS) {
+    let sum = 0;
+    let n = 0;
+    for (const s of pool) {
+      const v = (s as unknown as Record<string, unknown>)[key];
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        sum += v;
+        n++;
+      }
+    }
+    if (n > 0) averages[key] = { mean: sum / n, n };
+  }
+  return { count: pool.length, averages };
 }
 
 export function computeTrend(metric: TrendMetric, limit = 30, matchType?: string): TrendPoint[] {

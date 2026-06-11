@@ -15,3 +15,6 @@ certs/*.key
 
 *.log
 .DS_Store
+
+# Universo RFAF API response dumps (scripts/dump-universorfaf.ts)
+tmp-dump/

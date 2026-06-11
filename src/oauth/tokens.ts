@@ -15,7 +15,8 @@ interface TokenResponse {
   expires_in: number;
   token_type: string;
   scope: string;
-  user: { id: number };
+  /** Present on the auth-code exchange; password grants may omit it. */
+  user?: { id: number };
 }
 
 export function loadTokens(): StoredTokens | null {
@@ -47,7 +48,8 @@ function tokenToStored(resp: TokenResponse): StoredTokens {
     access_token: resp.access_token,
     refresh_token: resp.refresh_token,
     expires_at: Date.now() + resp.expires_in * 1000 - 60_000,
-    user_id: resp.user.id,
+    // Password grants don't echo the user; keep the id from a previous login.
+    user_id: resp.user?.id ?? loadTokens()?.user_id ?? 0,
     scope: resp.scope,
   };
 }
@@ -108,9 +110,49 @@ export async function refreshAccessToken(refreshToken: string): Promise<StoredTo
   return stored;
 }
 
+/**
+ * Headless login with the configured Footbar account (OAuth password grant).
+ * Lets the background sync authenticate without a browser OAuth round-trip.
+ */
+export async function loginWithPassword(): Promise<StoredTokens> {
+  if (!env.FOOTBAR_USERNAME || !env.FOOTBAR_PASSWORD) {
+    throw new Error('Not authenticated (set FOOTBAR_USERNAME/FOOTBAR_PASSWORD for headless login)');
+  }
+  const body = new URLSearchParams({
+    client_id: env.FOOTBAR_CLIENT_ID,
+    client_secret: env.FOOTBAR_CLIENT_SECRET,
+    grant_type: 'password',
+    username: env.FOOTBAR_USERNAME,
+    password: env.FOOTBAR_PASSWORD,
+    scope: 'read',
+  });
+  const res = await fetch(`${FOOTBAR_BASE}/oauth/token/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Cache-Control': 'no-cache',
+    },
+    body,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Footbar password login failed: ${res.status} ${text}`);
+  }
+  const json = (await res.json()) as TokenResponse;
+  const stored = tokenToStored(json);
+  saveTokens(stored);
+  return stored;
+}
+
 export async function getValidAccessToken(): Promise<StoredTokens> {
   const tokens = loadTokens();
-  if (!tokens) throw new Error('Not authenticated');
+  if (!tokens) return loginWithPassword();
   if (Date.now() < tokens.expires_at) return tokens;
-  return refreshAccessToken(tokens.refresh_token);
+  try {
+    return await refreshAccessToken(tokens.refresh_token);
+  } catch (e) {
+    // The refresh token can rot (rotation, revocation); re-login if we can.
+    if (env.FOOTBAR_USERNAME && env.FOOTBAR_PASSWORD) return loginWithPassword();
+    throw e;
+  }
 }

@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { db } from '../db.js';
 import { env, FOOTBAR_BASE } from '../env.js';
 import { challengeFromVerifier, generateCodeVerifier, generateState } from '../oauth/pkce.js';
-import { clearTokens, exchangeAuthCode, loadTokens } from '../oauth/tokens.js';
+import { clearTokens, exchangeAuthCode, getValidAccessToken, loadTokens } from '../oauth/tokens.js';
 
 const SESSION_COOKIE = 'sid';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
@@ -35,7 +35,25 @@ export function currentUserId(req: import('fastify').FastifyRequest): number | n
 }
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/auth/login', async (_req, reply) => {
+  app.get('/auth/login', async (req, reply) => {
+    // Headless first: when the backend already holds valid Footbar tokens (or
+    // can mint them with FOOTBAR_USERNAME/PASSWORD), the app session can be
+    // created directly — no Footbar OAuth page in the browser.
+    try {
+      const tokens = await getValidAccessToken();
+      if (tokens.user_id) {
+        const sid = newSessionId();
+        db.prepare(
+          'INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)',
+        ).run(sid, tokens.user_id, Date.now());
+        setSessionCookie(reply, sid);
+        reply.redirect(env.FRONTEND_ORIGIN + '/');
+        return;
+      }
+    } catch (e) {
+      req.log.warn(e, 'headless login unavailable, falling back to browser OAuth');
+    }
+
     const verifier = generateCodeVerifier();
     const challenge = challengeFromVerifier(verifier);
     const state = generateState();
@@ -96,9 +114,27 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  app.get('/auth/status', async (req) => {
-    const userId = currentUserId(req);
-    const tokens = loadTokens();
+  app.get('/auth/status', async (req, reply) => {
+    let userId = currentUserId(req);
+    let tokens = loadTokens();
+    if (userId === null || tokens === null || tokens.user_id !== userId) {
+      // Auto-provision the browser session: the scheduler keeps server-side
+      // Footbar tokens alive, so a visitor with no (or a stale) cookie can be
+      // signed in on this very response — the login page never shows.
+      try {
+        tokens = await getValidAccessToken();
+        if (tokens.user_id) {
+          const sid = newSessionId();
+          db.prepare(
+            'INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)',
+          ).run(sid, tokens.user_id, Date.now());
+          setSessionCookie(reply, sid);
+          userId = tokens.user_id;
+        }
+      } catch (e) {
+        req.log.warn(e, 'auto-login unavailable, manual login required');
+      }
+    }
     return {
       authenticated: userId !== null && tokens !== null && tokens.user_id === userId,
       user_id: userId,

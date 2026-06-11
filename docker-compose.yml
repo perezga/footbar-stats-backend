@@ -14,11 +14,19 @@ services:
       dockerfile: Dockerfile
     container_name: footbar-backend
     command: npm run dev
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
     environment:
       # Passed through from your shell — compose substitutes ${VAR} at `up`.
       FOOTBAR_CLIENT_ID: ${FOOTBAR_CLIENT_ID:?set FOOTBAR_CLIENT_ID in your environment}
       FOOTBAR_CLIENT_SECRET: ${FOOTBAR_CLIENT_SECRET:?set FOOTBAR_CLIENT_SECRET in your environment}
       COOKIE_SECRET: ${COOKIE_SECRET:?set COOKIE_SECRET in your environment}
+      RFAF_USERNAME: ${RFAF_USERNAME:?set RFAF_USERNAME in your environment}
+      RFAF_PASSWORD: ${RFAF_PASSWORD:?set RFAF_PASSWORD in your environment}
+      # Footbar account for the daily background sync (headless login).
+      FOOTBAR_USERNAME: ${FOOTBAR_USERNAME:-}
+      FOOTBAR_PASSWORD: ${FOOTBAR_PASSWORD:-}
+      SYNC_INTERVAL_HOURS: ${SYNC_INTERVAL_HOURS:-24}
       HOST: 0.0.0.0                # bind all interfaces so the port is reachable
       # Default to localhost; override (e.g. with the server's LAN IP) to allow
       # access from another machine. Must match the Redirect URI registered with

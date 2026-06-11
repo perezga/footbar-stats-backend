@@ -11,6 +11,7 @@ import { profileRoutes } from './routes/profile.js';
 import { rfafRoutes } from './routes/rfaf.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { statsRoutes } from './routes/stats.js';
+import { startScheduler } from './scheduler.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const certPath = resolve(here, '..', 'certs', 'cert.pem');
@@ -54,3 +55,5 @@ try {
   app.log.error(e);
   process.exit(1);
 }
+
+startScheduler(app.log);

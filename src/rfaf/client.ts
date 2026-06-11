@@ -1,8 +1,9 @@
-const RFAF_ORIGIN = 'https://www.rfaf.es';
-/** Visiting this path with a fresh JSESSIONID activates it server-side. */
-const ACTIVATE_PATH = '/pnfg/NLogin';
+import { env } from '../env.js';
+
+/** Universo RFAF API (the SPA at www.universorfaf.es talks to this). */
+const API_BASE = 'https://www.universorfaf.es/api/';
 const UA =
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
 
 export class RfafError extends Error {
   constructor(
@@ -13,55 +14,114 @@ export class RfafError extends Error {
   }
 }
 
-/** Cached JSESSIONID value (Path=/pnfg). Minted lazily, re-minted on expiry. */
-let sessionCookie: string | null = null;
+/** Cached bearer token. Minted lazily, re-minted once when a call gets a 401. */
+let token: string | null = null;
 
-function extractJsessionId(res: Response): string | null {
-  const cookies = res.headers.getSetCookie?.() ?? [];
-  for (const c of cookies) {
-    const m = /JSESSIONID=([^;]+)/.exec(c);
-    if (m) return m[1] ?? null;
-  }
-  return null;
+function toFormData(fields: Record<string, string>): FormData {
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+  return fd;
 }
 
-function rawGet(path: string, withCookie: boolean): Promise<Response> {
-  const headers: Record<string, string> = { 'User-Agent': UA };
-  if (withCookie && sessionCookie) headers.Cookie = `JSESSIONID=${sessionCookie}`;
-  return fetch(`${RFAF_ORIGIN}${path}`, { headers, redirect: 'manual' });
-}
-
-/**
- * Establish a usable session. RFAF mints a JSESSIONID on the first hit to any
- * NPcd page (which 302s to NLogin), but the cookie only becomes valid for data
- * pages after one visit to NLogin carrying it. `seedPath` is used to mint.
- */
-async function mintSession(seedPath: string): Promise<void> {
-  const seed = await rawGet(seedPath, false);
-  const sid = extractJsessionId(seed);
-  if (!sid) throw new RfafError(seed.status, 'RFAF: could not mint session (no JSESSIONID)');
-  sessionCookie = sid;
-  await rawGet(ACTIVATE_PATH, true); // activate the cookie
+/** Log in with the configured account and return a bearer token. */
+async function login(): Promise<string> {
+  const res = await fetch(`${API_BASE}login`, {
+    method: 'POST',
+    headers: { 'User-Agent': UA },
+    body: toFormData({ email: env.RFAF_USERNAME, password: env.RFAF_PASSWORD }),
+  });
+  if (res.status === 401) throw new RfafError(401, 'Universo RFAF: wrong username or password');
+  if (res.status === 403) throw new RfafError(403, 'Universo RFAF: account not allowed to log in');
+  if (!res.ok) throw new RfafError(res.status, `Universo RFAF: login failed (${res.status})`);
+  const body = (await res.json()) as { token?: string };
+  if (!body.token) throw new RfafError(res.status, 'Universo RFAF: login response had no token');
+  return body.token;
 }
 
 /**
- * Fetch an RFAF page and return its HTML decoded from ISO-8859-15.
- * Handles the session handshake and a single re-mint on session expiry.
+ * POST a FormData body to an API endpoint with the bearer token and return the
+ * JSON response. Logs in lazily and retries once if the token has expired.
  */
-export async function fetchRfafHtml(path: string): Promise<string> {
-  if (!sessionCookie) await mintSession(path);
+export async function apiPost(endpoint: string, fields: Record<string, string>): Promise<unknown> {
+  token ??= await login();
 
-  let res = await rawGet(path, true);
-  if (res.status >= 300 && res.status < 400) {
-    // Session lapsed (redirect to NLogin); re-mint once and retry.
-    await mintSession(path);
-    res = await rawGet(path, true);
+  let res = await rawPost(endpoint, fields);
+  if (res.status === 401) {
+    token = await login();
+    res = await rawPost(endpoint, fields);
   }
 
   if (!res.ok) {
-    throw new RfafError(res.status, `RFAF ${res.status} for ${path}`);
+    throw new RfafError(res.status, `Universo RFAF ${res.status} for ${endpoint}`);
   }
+  return res.json();
+}
 
-  const buf = await res.arrayBuffer();
-  return new TextDecoder('iso-8859-15').decode(buf);
+function rawPost(endpoint: string, fields: Record<string, string>): Promise<Response> {
+  return fetch(`${API_BASE}${endpoint}`, {
+    method: 'POST',
+    headers: { 'User-Agent': UA, Authorization: `Bearer ${token}` },
+    body: toFormData(fields),
+  });
+}
+
+/** Profile of the logged-in account; handy to verify the login works. */
+export function fetchUser(): Promise<unknown> {
+  return apiPost('user', {});
+}
+
+/** League table for a group. */
+export function fetchClassification(groupId: string): Promise<unknown> {
+  return apiPost('novanet/competition/get-classification', {
+    id_group: groupId,
+    id_round: '',
+  });
+}
+
+/** Top scorers for a competition/group. */
+export function fetchScorers(competitionId: string, groupId: string): Promise<unknown> {
+  return apiPost('novanet/competition/get-scorers', {
+    id_competition: competitionId,
+    id_group: groupId,
+  });
+}
+
+/** Full season calendar (fixtures + results) for a team. */
+export function fetchCalendarTeam(
+  competitionId: string,
+  groupId: string,
+  teamId: string,
+): Promise<unknown> {
+  return apiPost('novanet/match/get-calendar-team', {
+    id_competition: competitionId,
+    id_group: groupId,
+    id_team: teamId,
+  });
+}
+
+export function fetchPlayerDetail(playerId: string): Promise<unknown> {
+  return apiPost('novanet/player/get-detail-player', { id_player: playerId });
+}
+
+export function fetchPlayerGeneralStats(playerId: string, seasonId: string): Promise<unknown> {
+  return apiPost('novanet/player/get-player-general-stats', {
+    id_player: playerId,
+    id_season: seasonId,
+  });
+}
+
+/**
+ * Played matches with the player's per-match events ("partidos jugados").
+ * `season` is the label ('2025-2026') or start year — NOT the season id.
+ */
+export function fetchPlayerMatchs(playerId: string, season: string): Promise<unknown> {
+  return apiPost('internal-data/player/matchs', { cod_player: playerId, season });
+}
+
+/** Same as fetchPlayerMatchs plus minutes; `season` is the label, not the id. */
+export function fetchPlayerMatchsMinutes(playerId: string, season: string): Promise<unknown> {
+  return apiPost('internal-data/player/matchs-minutes', {
+    cod_player: playerId,
+    season,
+  });
 }

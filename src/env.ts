@@ -19,12 +19,25 @@ const Env = z.object({
   HOST: z.string().default('127.0.0.1'),
   COOKIE_SECRET: z.string().min(16, 'COOKIE_SECRET must be at least 16 chars'),
 
+  // Footbar account for the background sync: lets the scheduler log in
+  // headlessly (OAuth password grant) when no browser-login tokens exist.
+  FOOTBAR_USERNAME: z.string().default(''),
+  FOOTBAR_PASSWORD: z.string().default(''),
+  /** Background sync cadence in hours; 0 disables the scheduler. */
+  SYNC_INTERVAL_HOURS: z.coerce.number().min(0).default(24),
+
+  // Universo RFAF (www.universorfaf.es) account used to fetch league data.
+  RFAF_USERNAME: z.string().min(1, 'RFAF_USERNAME is required'),
+  RFAF_PASSWORD: z.string().min(1, 'RFAF_PASSWORD is required'),
+
   // RFAF league/competition identifiers (defaults track ATLÉTICO ESTACIÓN "A").
-  RFAF_COD_PRIMARIA_CLASIF: z.string().default('1000120'),
-  RFAF_COD_PRIMARIA_GRUPO: z.string().default('1000123'),
   RFAF_CODCOMPETICION: z.string().default('44788581'),
   RFAF_CODGRUPO: z.string().default('46734797'),
   RFAF_CODEQUIPO: z.coerce.number().int().positive().default(817922),
+  /** Universo RFAF player id for the tracked player's stats page. */
+  RFAF_CODPLAYER: z.string().default('35133353'),
+  /** Universo RFAF season id (21 = 2025/26). */
+  RFAF_SEASON: z.string().default('21'),
   /** Substring used to flag the tracked player in the scorers table. */
   RFAF_OWN_PLAYER: z.string().default('PEREZ GARCIA, ERIK'),
   /** Team name used to decide which side of a fixture is ours. */

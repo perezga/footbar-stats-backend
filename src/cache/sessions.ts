@@ -97,6 +97,18 @@ export function listSessions(filters: SessionListFilters): SessionListResult {
   };
 }
 
+/** Every cached session list row, newest first (for merged views). */
+export function listAllSessions(matchType?: MatchType): SessionListAPI[] {
+  const rows = (
+    matchType
+      ? db
+          .prepare('SELECT list_data FROM sessions WHERE match_type = ? ORDER BY start_date DESC')
+          .all(matchType)
+      : db.prepare('SELECT list_data FROM sessions ORDER BY start_date DESC').all()
+  ) as { list_data: string }[];
+  return rows.map((r) => JSON.parse(r.list_data) as SessionListAPI);
+}
+
 export async function getSessionDetail(id: number): Promise<SessionAPI> {
   const row = db
     .prepare(
