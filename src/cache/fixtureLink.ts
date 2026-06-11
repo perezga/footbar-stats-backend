@@ -72,8 +72,19 @@ function toSessionFixture(
   };
 }
 
+// The index is rebuilt from the SQLite-cached RFAF payloads on every session
+// request otherwise; a short memo skips the re-parse. Refresh paths call
+// invalidateFixtureIndex() so a manual RFAF refresh shows up immediately.
+const INDEX_TTL_MS = 5 * 60 * 1000;
+let indexMemo: { builtAt: number; index: Map<string, DayFixture> } | null = null;
+
+export function invalidateFixtureIndex(): void {
+  indexMemo = null;
+}
+
 /** Map of 'YYYY-MM-DD' → fixture + player events. Empty on RFAF failure. */
 export async function buildFixtureIndex(): Promise<Map<string, DayFixture>> {
+  if (indexMemo && Date.now() - indexMemo.builtAt < INDEX_TTL_MS) return indexMemo.index;
   const { results } = await getFixtures();
   const index = new Map<string, DayFixture>();
   for (const f of results) {
@@ -91,6 +102,7 @@ export async function buildFixtureIndex(): Promise<Map<string, DayFixture>> {
   } catch {
     // Events are an optional layer; fixtures alone still enrich sessions.
   }
+  indexMemo = { builtAt: Date.now(), index };
   return index;
 }
 

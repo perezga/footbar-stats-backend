@@ -1,6 +1,7 @@
 import { db, getSyncState, setSyncState } from '../db.js';
 import { fetchSessionDetail, fetchSessionList } from '../footbar/client.js';
 import type { MatchType, SessionAPI, SessionListAPI } from '../footbar/types.js';
+import { invalidateDetailsCache } from './derive.js';
 
 const LIST_TTL_MS = 60 * 60 * 1000;
 const LAST_SYNC_KEY = 'last_list_sync';
@@ -39,6 +40,7 @@ async function syncList(): Promise<void> {
     }
   });
   writeAll(page.results);
+  invalidateDetailsCache();
   setSyncState(LAST_SYNC_KEY, Date.now().toString());
 }
 
@@ -154,6 +156,7 @@ export async function getSessionDetail(id: number): Promise<SessionAPI> {
       detail_fetched_at: Date.now(),
     });
   }
+  invalidateDetailsCache();
   return fresh;
 }
 
@@ -185,14 +188,8 @@ export async function refreshSessionDetail(id: number): Promise<SessionAPI> {
       tracker_data: fresh.tracker_data,
     }),
   });
+  invalidateDetailsCache();
   return fresh;
-}
-
-export function allCachedDetails(): SessionAPI[] {
-  const rows = db
-    .prepare('SELECT detail_data FROM sessions WHERE detail_data IS NOT NULL')
-    .all() as { detail_data: string }[];
-  return rows.map((r) => JSON.parse(r.detail_data) as SessionAPI);
 }
 
 export function getLastSync(): number {

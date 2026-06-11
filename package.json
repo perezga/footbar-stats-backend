@@ -11,6 +11,7 @@
     "cert": "bash scripts/gen-cert.sh"
   },
   "dependencies": {
+    "@fastify/compress": "^9.0.0",
     "@fastify/cookie": "^11.0.1",
     "@fastify/cors": "^10.0.1",
     "better-sqlite3": "^11.5.0",

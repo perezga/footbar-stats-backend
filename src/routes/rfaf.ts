@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { invalidateFixtureIndex } from '../cache/fixtureLink.js';
 import {
   getFixtures,
   getPlayerStats,
@@ -38,6 +39,7 @@ export async function rfafRoutes(app: FastifyInstance): Promise<void> {
 
   app.post<SeasonQuery>('/api/rfaf/refresh', async (req) => {
     await refreshAll(req.query.season);
+    invalidateFixtureIndex();
     return { ok: true };
   });
 }

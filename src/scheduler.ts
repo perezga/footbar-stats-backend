@@ -1,4 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
+import { invalidateFixtureIndex } from './cache/fixtureLink.js';
 import { getProfile } from './cache/profile.js';
 import { refreshAll } from './cache/rfaf.js';
 import { ensureListFresh, getSessionDetail } from './cache/sessions.js';
@@ -53,6 +54,7 @@ export async function runSync(log: FastifyBaseLogger): Promise<void> {
   }
   try {
     await refreshAll();
+    invalidateFixtureIndex();
     log.info('scheduler: RFAF synced');
   } catch (e) {
     ok = false;

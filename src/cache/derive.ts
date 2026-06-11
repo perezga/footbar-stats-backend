@@ -13,7 +13,19 @@ interface DetailRow {
   detail_data: string;
 }
 
+// Stats endpoints re-derive from every cached detail; parsing them all per
+// request gets slow as sessions accumulate, so keep the parsed pool in memory
+// until a session write invalidates it.
+const detailsCache = new Map<string, SessionAPI[]>();
+
+export function invalidateDetailsCache(): void {
+  detailsCache.clear();
+}
+
 function allDetails(matchType?: string): SessionAPI[] {
+  const key = matchType ?? 'all';
+  const hit = detailsCache.get(key);
+  if (hit) return hit;
   const rows = (
     matchType
       ? db
@@ -23,7 +35,9 @@ function allDetails(matchType?: string): SessionAPI[] {
           .all(matchType)
       : db.prepare('SELECT detail_data FROM sessions WHERE detail_data IS NOT NULL').all()
   ) as DetailRow[];
-  return rows.map((r) => JSON.parse(r.detail_data) as SessionAPI);
+  const details = rows.map((r) => JSON.parse(r.detail_data) as SessionAPI);
+  detailsCache.set(key, details);
+  return details;
 }
 
 const RECORD_METRICS: { key: keyof SessionAPI; label: string }[] = [

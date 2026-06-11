@@ -1,3 +1,4 @@
+import compress from '@fastify/compress';
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
@@ -36,6 +37,8 @@ await app.register(cors, {
   origin: env.FRONTEND_ORIGIN,
   credentials: true,
 });
+
+await app.register(compress);
 
 await app.register(cookie, {
   secret: env.COOKIE_SECRET,
