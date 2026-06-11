@@ -2,6 +2,7 @@ import { db, getSyncState, setSyncState } from '../db.js';
 import { fetchSessionDetail, fetchSessionList } from '../footbar/client.js';
 import type { MatchType, SessionAPI, SessionListAPI } from '../footbar/types.js';
 import { invalidateDetailsCache } from './derive.js';
+import { tryParse } from '../util/json.js';
 
 const LIST_TTL_MS = 60 * 60 * 1000;
 const LAST_SYNC_KEY = 'last_list_sync';
@@ -94,7 +95,7 @@ export function listSessions(filters: SessionListFilters): SessionListResult {
 
   return {
     count,
-    results: rows.map((r) => JSON.parse(r.list_data) as SessionListAPI),
+    results: rows.flatMap((r) => tryParse<SessionListAPI>(r.list_data) ?? []),
     last_sync: Number(getSyncState(LAST_SYNC_KEY) ?? 0),
   };
 }
@@ -108,7 +109,7 @@ export function listAllSessions(matchType?: MatchType): SessionListAPI[] {
           .all(matchType)
       : db.prepare('SELECT list_data FROM sessions ORDER BY start_date DESC').all()
   ) as { list_data: string }[];
-  return rows.map((r) => JSON.parse(r.list_data) as SessionListAPI);
+  return rows.flatMap((r) => tryParse<SessionListAPI>(r.list_data) ?? []);
 }
 
 export async function getSessionDetail(id: number): Promise<SessionAPI> {
@@ -118,7 +119,9 @@ export async function getSessionDetail(id: number): Promise<SessionAPI> {
     )
     .get(id) as { detail_data: string | null; detail_fetched_at: number | null } | undefined;
   if (row?.detail_data) {
-    return JSON.parse(row.detail_data) as SessionAPI;
+    // A corrupt cached detail counts as a miss and is re-fetched below.
+    const cached = tryParse<SessionAPI>(row.detail_data);
+    if (cached) return cached;
   }
   const fresh = await fetchSessionDetail(id);
   const existing = db

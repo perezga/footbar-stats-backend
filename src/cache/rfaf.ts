@@ -25,6 +25,7 @@ import type {
   SeasonContext,
   Standing,
 } from '../rfaf/types.js';
+import { tryParse } from '../util/json.js';
 
 const TTL_MS = 6 * 60 * 60 * 1000; // data only changes after matchdays
 
@@ -57,7 +58,9 @@ interface Cached<T> {
 async function load<T>(key: string, fetch: () => Promise<T>, force: boolean): Promise<Cached<T>> {
   const row = selectRow.get(key) as { data: string; fetched_at: number } | undefined;
   if (!force && row && Date.now() - row.fetched_at < TTL_MS) {
-    return { results: JSON.parse(row.data) as T, fetched_at: row.fetched_at };
+    // A corrupt cached payload counts as a miss and is re-fetched below.
+    const cached = tryParse<T>(row.data);
+    if (cached !== null) return { results: cached, fetched_at: row.fetched_at };
   }
   const results = await fetch();
   const fetched_at = Date.now();

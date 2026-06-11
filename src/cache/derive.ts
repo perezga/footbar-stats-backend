@@ -1,5 +1,6 @@
 import { db } from '../db.js';
 import type { SessionAPI } from '../footbar/types.js';
+import { tryParse } from '../util/json.js';
 
 export interface RecordEntry {
   metric: string;
@@ -35,7 +36,8 @@ function allDetails(matchType?: string): SessionAPI[] {
           .all(matchType)
       : db.prepare('SELECT detail_data FROM sessions WHERE detail_data IS NOT NULL').all()
   ) as DetailRow[];
-  const details = rows.map((r) => JSON.parse(r.detail_data) as SessionAPI);
+  // A corrupt row drops out of the pool instead of failing the whole request.
+  const details = rows.flatMap((r) => tryParse<SessionAPI>(r.detail_data) ?? []);
   detailsCache.set(key, details);
   return details;
 }
