@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { db } from '../db.js';
 import { env, FOOTBAR_BASE } from '../env.js';
@@ -32,6 +32,23 @@ export function currentUserId(req: import('fastify').FastifyRequest): number | n
     .prepare('SELECT user_id FROM app_sessions WHERE sid = ?')
     .get(unsigned.value) as { user_id: number } | undefined;
   return row?.user_id ?? null;
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    /** Set by requireAuth; non-null in every route registered behind it. */
+    userId: number | null;
+  }
+}
+
+/** onRequest hook for the protected /api scope: 401s anonymous requests. */
+export async function requireAuth(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const userId = currentUserId(req);
+  if (userId === null) {
+    await reply.code(401).send({ error: 'Not authenticated' });
+    return;
+  }
+  req.userId = userId;
 }
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {

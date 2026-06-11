@@ -17,7 +17,6 @@ import {
   refreshSessionDetail,
 } from '../cache/sessions.js';
 import type { MatchType } from '../footbar/types.js';
-import { currentUserId } from './auth.js';
 
 /** Build the fixture index, tolerating RFAF being slow/unavailable. */
 async function safeFixtureIndex(app: FastifyInstance): Promise<Map<string, DayFixture>> {
@@ -41,11 +40,7 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       offset?: string;
       include_fixtures?: string;
     };
-  }>('/api/sessions', async (req, reply) => {
-    if (currentUserId(req) === null) {
-      reply.code(401);
-      return { error: 'Not authenticated' };
-    }
+  }>('/api/sessions', async (req) => {
     await ensureListFresh(false);
     const q = req.query;
     const matchType =
@@ -89,20 +84,12 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
     return { ...page, results: page.results.map((s) => enrichSession(s, index)) };
   });
 
-  app.post('/api/sessions/refresh', async (req, reply) => {
-    if (currentUserId(req) === null) {
-      reply.code(401);
-      return { error: 'Not authenticated' };
-    }
+  app.post('/api/sessions/refresh', async () => {
     await ensureListFresh(true);
     return { ok: true, last_sync: getLastSync() };
   });
 
   app.get<{ Params: { id: string } }>('/api/sessions/:id', async (req, reply) => {
-    if (currentUserId(req) === null) {
-      reply.code(401);
-      return { error: 'Not authenticated' };
-    }
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) {
       reply.code(400);
@@ -114,10 +101,6 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post<{ Params: { id: string } }>('/api/sessions/:id/refresh', async (req, reply) => {
-    if (currentUserId(req) === null) {
-      reply.code(401);
-      return { error: 'Not authenticated' };
-    }
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) {
       reply.code(400);

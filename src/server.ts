@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { env } from './env.js';
 import './db.js';
-import { authRoutes } from './routes/auth.js';
+import { authRoutes, requireAuth } from './routes/auth.js';
 import { profileRoutes } from './routes/profile.js';
 import { rfafRoutes } from './routes/rfaf.js';
 import { sessionRoutes } from './routes/sessions.js';
@@ -42,10 +42,17 @@ await app.register(cookie, {
 });
 
 await app.register(authRoutes);
-await app.register(profileRoutes);
-await app.register(sessionRoutes);
-await app.register(statsRoutes);
-await app.register(rfafRoutes);
+
+// Everything under this plugin requires a signed session cookie; auth routes
+// and /health stay public above/below.
+await app.register(async (api) => {
+  api.decorateRequest('userId', null);
+  api.addHook('onRequest', requireAuth);
+  await api.register(profileRoutes);
+  await api.register(sessionRoutes);
+  await api.register(statsRoutes);
+  await api.register(rfafRoutes);
+});
 
 app.get('/health', async () => ({ ok: true }));
 

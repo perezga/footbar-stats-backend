@@ -7,61 +7,36 @@ import {
   getStandings,
   refreshAll,
 } from '../cache/rfaf.js';
-import { currentUserId } from './auth.js';
 
 interface SeasonQuery {
   Querystring: { season?: string };
 }
 
 export async function rfafRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/rfaf/seasons', async (req, reply) => {
-    if (currentUserId(req) === null) {
-      reply.code(401);
-      return { error: 'Not authenticated' };
-    }
+  app.get('/api/rfaf/seasons', async () => {
     return getSeasons();
   });
 
-  app.get<SeasonQuery>('/api/rfaf/standings', async (req, reply) => {
-    if (currentUserId(req) === null) {
-      reply.code(401);
-      return { error: 'Not authenticated' };
-    }
+  app.get<SeasonQuery>('/api/rfaf/standings', async (req) => {
     return getStandings(false, req.query.season);
   });
 
-  app.get<SeasonQuery>('/api/rfaf/scorers', async (req, reply) => {
-    if (currentUserId(req) === null) {
-      reply.code(401);
-      return { error: 'Not authenticated' };
-    }
+  app.get<SeasonQuery>('/api/rfaf/scorers', async (req) => {
     return getScorers(false, req.query.season);
   });
 
-  app.get<SeasonQuery>('/api/rfaf/fixtures', async (req, reply) => {
-    if (currentUserId(req) === null) {
-      reply.code(401);
-      return { error: 'Not authenticated' };
-    }
+  app.get<SeasonQuery>('/api/rfaf/fixtures', async (req) => {
     return getFixtures(false, req.query.season);
   });
 
   app.get<{ Querystring: { player?: string; season?: string } }>(
     '/api/rfaf/player-stats',
-    async (req, reply) => {
-      if (currentUserId(req) === null) {
-        reply.code(401);
-        return { error: 'Not authenticated' };
-      }
+    async (req) => {
       return getPlayerStats(false, req.query.player, req.query.season);
     },
   );
 
-  app.post<SeasonQuery>('/api/rfaf/refresh', async (req, reply) => {
-    if (currentUserId(req) === null) {
-      reply.code(401);
-      return { error: 'Not authenticated' };
-    }
+  app.post<SeasonQuery>('/api/rfaf/refresh', async (req) => {
     await refreshAll(req.query.season);
     return { ok: true };
   });
