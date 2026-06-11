@@ -14,6 +14,21 @@ services:
       dockerfile: Dockerfile
     container_name: footbar-backend
     command: npm run dev
+    restart: unless-stopped
+    healthcheck:
+      # The slim image has no curl/wget; node's fetch hits /health over the
+      # self-signed TLS cert.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "process.env.NODE_TLS_REJECT_UNAUTHORIZED='0'; fetch('https://localhost:4000/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
     environment:
