@@ -53,8 +53,16 @@ interface Row {
 
 describe('combineLegRows', () => {
   it('merges a played ida/vuelta pair into the vuelta row', () => {
-    const ida: Row = { id: 1, start_date: '2025-10-05T12:00:00', fixture: fixture('CF RIVAL', '2025-10-05', 'W') };
-    const vuelta: Row = { id: 2, start_date: '2026-02-08T12:00:00', fixture: fixture('CF Rival', '2026-02-08', 'L') };
+    const ida: Row = {
+      id: 1,
+      start_date: '2025-10-05T12:00:00',
+      fixture: fixture('CF RIVAL', '2025-10-05', 'W'),
+    };
+    const vuelta: Row = {
+      id: 2,
+      start_date: '2026-02-08T12:00:00',
+      fixture: fixture('CF Rival', '2026-02-08', 'L'),
+    };
     const out = combineLegRows([vuelta, ida]);
     expect(out).toHaveLength(1);
     expect(out[0]?.id).toBe(2);
@@ -63,8 +71,16 @@ describe('combineLegRows', () => {
   });
 
   it('keeps the ida row while the vuelta is unplayed', () => {
-    const ida: Row = { id: 1, start_date: '2025-10-05T12:00:00', fixture: fixture('CF RIVAL', '2025-10-05', 'W') };
-    const vuelta: Row = { id: null, start_date: '2026-02-08T12:00:00', fixture: fixture('CF RIVAL', '2026-02-08', null) };
+    const ida: Row = {
+      id: 1,
+      start_date: '2025-10-05T12:00:00',
+      fixture: fixture('CF RIVAL', '2025-10-05', 'W'),
+    };
+    const vuelta: Row = {
+      id: null,
+      start_date: '2026-02-08T12:00:00',
+      fixture: fixture('CF RIVAL', '2026-02-08', null),
+    };
     const out = combineLegRows([vuelta, ida]);
     expect(out).toHaveLength(1);
     expect(out[0]?.id).toBe(1);
