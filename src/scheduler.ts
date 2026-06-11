@@ -22,9 +22,9 @@ async function syncFootbar(log: FastifyBaseLogger): Promise<void> {
   await ensureListFresh(true);
   // The app fetches session details lazily; prefetch whatever is missing so
   // records/trends cover every session without anyone opening it first.
-  const missing = db
-    .prepare('SELECT id FROM sessions WHERE detail_data IS NULL')
-    .all() as { id: number }[];
+  const missing = db.prepare('SELECT id FROM sessions WHERE detail_data IS NULL').all() as {
+    id: number;
+  }[];
   for (const { id } of missing) {
     try {
       await getSessionDetail(id);

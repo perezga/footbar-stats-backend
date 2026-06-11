@@ -21,7 +21,9 @@ interface TokenResponse {
 
 export function loadTokens(): StoredTokens | null {
   const row = db
-    .prepare('SELECT access_token, refresh_token, expires_at, user_id, scope FROM oauth_tokens WHERE id = 1')
+    .prepare(
+      'SELECT access_token, refresh_token, expires_at, user_id, scope FROM oauth_tokens WHERE id = 1',
+    )
     .get() as StoredTokens | undefined;
   return row ?? null;
 }

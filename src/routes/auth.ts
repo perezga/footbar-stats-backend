@@ -1,5 +1,5 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { db } from '../db.js';
 import { env, FOOTBAR_BASE } from '../env.js';
 import { challengeFromVerifier, generateCodeVerifier, generateState } from '../oauth/pkce.js';
@@ -28,9 +28,9 @@ export function currentUserId(req: import('fastify').FastifyRequest): number | n
   if (!raw) return null;
   const unsigned = req.unsignCookie(raw);
   if (!unsigned.valid || !unsigned.value) return null;
-  const row = db
-    .prepare('SELECT user_id FROM app_sessions WHERE sid = ?')
-    .get(unsigned.value) as { user_id: number } | undefined;
+  const row = db.prepare('SELECT user_id FROM app_sessions WHERE sid = ?').get(unsigned.value) as
+    | { user_id: number }
+    | undefined;
   return row?.user_id ?? null;
 }
 
@@ -60,9 +60,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       const tokens = await getValidAccessToken();
       if (tokens.user_id) {
         const sid = newSessionId();
-        db.prepare(
-          'INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)',
-        ).run(sid, tokens.user_id, Date.now());
+        db.prepare('INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)').run(
+          sid,
+          tokens.user_id,
+          Date.now(),
+        );
         setSessionCookie(reply, sid);
         reply.redirect(env.FRONTEND_ORIGIN + '/');
         return;
@@ -74,9 +76,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const verifier = generateCodeVerifier();
     const challenge = challengeFromVerifier(verifier);
     const state = generateState();
-    db.prepare(
-      'INSERT INTO oauth_state (state, code_verifier, created_at) VALUES (?, ?, ?)',
-    ).run(state, verifier, Date.now());
+    db.prepare('INSERT INTO oauth_state (state, code_verifier, created_at) VALUES (?, ?, ?)').run(
+      state,
+      verifier,
+      Date.now(),
+    );
 
     db.prepare('DELETE FROM oauth_state WHERE created_at < ?').run(Date.now() - STATE_TTL_MS);
 
@@ -119,9 +123,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       try {
         const tokens = await exchangeAuthCode({ code, code_verifier: row.code_verifier });
         const sid = newSessionId();
-        db.prepare(
-          'INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)',
-        ).run(sid, tokens.user_id, Date.now());
+        db.prepare('INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)').run(
+          sid,
+          tokens.user_id,
+          Date.now(),
+        );
         setSessionCookie(reply, sid);
         reply.redirect(env.FRONTEND_ORIGIN + '/');
       } catch (e) {
@@ -142,9 +148,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         tokens = await getValidAccessToken();
         if (tokens.user_id) {
           const sid = newSessionId();
-          db.prepare(
-            'INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)',
-          ).run(sid, tokens.user_id, Date.now());
+          db.prepare('INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)').run(
+            sid,
+            tokens.user_id,
+            Date.now(),
+          );
           setSessionCookie(reply, sid);
           userId = tokens.user_id;
         }

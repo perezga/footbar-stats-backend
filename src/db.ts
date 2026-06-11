@@ -1,7 +1,7 @@
-import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import Database from 'better-sqlite3';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dbPath = resolve(here, '..', 'data', 'footbar.db');
@@ -64,9 +64,9 @@ db.exec(`
 `);
 
 export function getSyncState(key: string): string | null {
-  const row = db
-    .prepare('SELECT value FROM sync_state WHERE key = ?')
-    .get(key) as { value: string } | undefined;
+  const row = db.prepare('SELECT value FROM sync_state WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined;
   return row?.value ?? null;
 }
 

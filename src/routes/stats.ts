@@ -30,7 +30,11 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
       }
       const limit = req.query.limit ? Number(req.query.limit) : 30;
       const matchType = parseMatchType(req.query.match_type);
-      return { metric, match_type: matchType ?? null, points: computeTrend(metric, limit, matchType) };
+      return {
+        metric,
+        match_type: matchType ?? null,
+        points: computeTrend(metric, limit, matchType),
+      };
     },
   );
 
@@ -39,8 +43,15 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
     async (req) => {
       const matchType = parseMatchType(req.query.match_type);
       const exclude = Number(req.query.exclude);
-      const window = Math.min(Math.max(req.query.window ? Number(req.query.window) || 10 : 10, 1), 100);
-      const result = computeAverages(matchType, Number.isFinite(exclude) ? exclude : undefined, window);
+      const window = Math.min(
+        Math.max(req.query.window ? Number(req.query.window) || 10 : 10, 1),
+        100,
+      );
+      const result = computeAverages(
+        matchType,
+        Number.isFinite(exclude) ? exclude : undefined,
+        window,
+      );
       return { match_type: matchType ?? null, window, ...result };
     },
   );

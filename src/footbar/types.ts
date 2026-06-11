@@ -1,12 +1,39 @@
 export type FavFoot = 'r' | 'l' | 'b' | 'n';
 export type Gender = 'm' | 'f';
 export type AgeCategory =
-  | 'U6' | 'U7' | 'U8' | 'U9' | 'U10' | 'U11' | 'U12' | 'U13' | 'U14'
-  | 'U15' | 'U16' | 'U17' | 'U18' | 'U19' | 'SNR' | 'VTR';
+  | 'U6'
+  | 'U7'
+  | 'U8'
+  | 'U9'
+  | 'U10'
+  | 'U11'
+  | 'U12'
+  | 'U13'
+  | 'U14'
+  | 'U15'
+  | 'U16'
+  | 'U17'
+  | 'U18'
+  | 'U19'
+  | 'SNR'
+  | 'VTR';
 export type MatchType = '11' | 'ss' | 'tr' | 'ru';
 export type Position =
-  | 'gk' | 'rb' | 'cb' | 'lb' | 'rwb' | 'lwb'
-  | 'cdm' | 'cm' | 'cam' | 'rm' | 'lm' | 'rw' | 'lw' | 'cf' | 'st';
+  | 'gk'
+  | 'rb'
+  | 'cb'
+  | 'lb'
+  | 'rwb'
+  | 'lwb'
+  | 'cdm'
+  | 'cm'
+  | 'cam'
+  | 'rm'
+  | 'lm'
+  | 'rw'
+  | 'lw'
+  | 'cf'
+  | 'st';
 export type Strength = 'tec' | 'pac' | 'sta' | 'sho' | 'un';
 
 export interface GeoPoint {

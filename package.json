@@ -8,6 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome check src",
+    "lint:fix": "biome check --write src",
     "cert": "bash scripts/gen-cert.sh"
   },
   "dependencies": {
@@ -20,6 +22,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.16",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.9.0",
     "tsx": "^4.19.2",

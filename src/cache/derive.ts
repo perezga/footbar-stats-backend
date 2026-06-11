@@ -187,6 +187,6 @@ export function computeTrend(metric: TrendMetric, limit = 30, matchType?: string
     session_id: s.id,
     start_date: s.start_date,
     title: s.title,
-    value: ((s as unknown as Record<string, number>)[metric]) ?? 0,
+    value: (s as unknown as Record<string, number>)[metric] ?? 0,
   }));
 }

@@ -32,7 +32,10 @@ const TTL_MS = 6 * 60 * 60 * 1000; // data only changes after matchdays
 /** Normalize a name for tolerant matching (drop accents/punctuation/case). */
 export function norm(s: string): string {
   // NFD splits accents into combining marks; stripping non-alphanumerics drops them.
-  return s.normalize('NFD').replace(/[^a-z0-9]/gi, '').toUpperCase();
+  return s
+    .normalize('NFD')
+    .replace(/[^a-z0-9]/gi, '')
+    .toUpperCase();
 }
 
 function markStandings(rows: Standing[], ownTeamId: number | null): Standing[] {
@@ -74,7 +77,11 @@ async function load<T>(key: string, fetch: () => Promise<T>, force: boolean): Pr
  * competition/group/team ids for the league views.
  */
 function loadGeneral(seasonId: string, force = false): Promise<Cached<unknown>> {
-  return load(`general:${seasonId}`, () => fetchPlayerGeneralStats(env.RFAF_CODPLAYER, seasonId), force);
+  return load(
+    `general:${seasonId}`,
+    () => fetchPlayerGeneralStats(env.RFAF_CODPLAYER, seasonId),
+    force,
+  );
 }
 
 async function seasonContext(seasonId: string): Promise<SeasonContext | null> {
@@ -94,7 +101,9 @@ export async function getStandings(
   return load(
     `standings:${seasonId}`,
     async () =>
-      ctx ? markStandings(mapStandings(await fetchClassification(ctx.group)), Number(ctx.team)) : [],
+      ctx
+        ? markStandings(mapStandings(await fetchClassification(ctx.group)), Number(ctx.team))
+        : [],
     force,
   );
 }
@@ -106,7 +115,8 @@ export async function getScorers(
   const ctx = await seasonContext(seasonId);
   return load(
     `scorers:${seasonId}`,
-    async () => (ctx ? markScorers(mapScorers(await fetchScorers(ctx.competition, ctx.group))) : []),
+    async () =>
+      ctx ? markScorers(mapScorers(await fetchScorers(ctx.competition, ctx.group))) : [],
     force,
   );
 }
@@ -119,7 +129,9 @@ export async function getFixtures(
   return load(
     `fixtures:${seasonId}`,
     async () =>
-      ctx ? mapFixtures(await fetchCalendarTeam(ctx.competition, ctx.group, ctx.team), ctx.team) : [],
+      ctx
+        ? mapFixtures(await fetchCalendarTeam(ctx.competition, ctx.group, ctx.team), ctx.team)
+        : [],
     force,
   );
 }

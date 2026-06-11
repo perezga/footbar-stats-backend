@@ -2,11 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import {
   buildFixtureIndex,
   combineLegRows,
+  type DayFixture,
   enrichSession,
+  type FixtureOnlySession,
   fixtureOnlySession,
   madridDateKey,
-  type DayFixture,
-  type FixtureOnlySession,
 } from '../cache/fixtureLink.js';
 import {
   ensureListFresh,

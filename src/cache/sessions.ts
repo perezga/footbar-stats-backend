@@ -1,21 +1,11 @@
 import { db, getSyncState, setSyncState } from '../db.js';
 import { fetchSessionDetail, fetchSessionList } from '../footbar/client.js';
 import type { MatchType, SessionAPI, SessionListAPI } from '../footbar/types.js';
-import { invalidateDetailsCache } from './derive.js';
 import { tryParse } from '../util/json.js';
+import { invalidateDetailsCache } from './derive.js';
 
 const LIST_TTL_MS = 60 * 60 * 1000;
 const LAST_SYNC_KEY = 'last_list_sync';
-
-interface SessionRow {
-  id: number;
-  start_date: string;
-  match_type: string;
-  position: string | null;
-  list_data: string;
-  detail_data: string | null;
-  detail_fetched_at: number | null;
-}
 
 const upsertList = db.prepare(
   `INSERT INTO sessions (id, start_date, match_type, position, list_data)
@@ -114,9 +104,7 @@ export function listAllSessions(matchType?: MatchType): SessionListAPI[] {
 
 export async function getSessionDetail(id: number): Promise<SessionAPI> {
   const row = db
-    .prepare(
-      'SELECT detail_data, detail_fetched_at FROM sessions WHERE id = ?',
-    )
+    .prepare('SELECT detail_data, detail_fetched_at FROM sessions WHERE id = ?')
     .get(id) as { detail_data: string | null; detail_fetched_at: number | null } | undefined;
   if (row?.detail_data) {
     // A corrupt cached detail counts as a miss and is re-fetched below.
@@ -124,9 +112,9 @@ export async function getSessionDetail(id: number): Promise<SessionAPI> {
     if (cached) return cached;
   }
   const fresh = await fetchSessionDetail(id);
-  const existing = db
-    .prepare('SELECT id FROM sessions WHERE id = ?')
-    .get(id) as { id: number } | undefined;
+  const existing = db.prepare('SELECT id FROM sessions WHERE id = ?').get(id) as
+    | { id: number }
+    | undefined;
   if (existing) {
     db.prepare(
       `UPDATE sessions SET detail_data = @detail_data, detail_fetched_at = @detail_fetched_at WHERE id = @id`,
@@ -169,7 +157,9 @@ export async function getSessionDetail(id: number): Promise<SessionAPI> {
  * session that was later reclassified/retimed in Footbar is fully corrected.
  */
 export async function refreshSessionDetail(id: number): Promise<SessionAPI> {
-  db.prepare('UPDATE sessions SET detail_data = NULL, detail_fetched_at = NULL WHERE id = ?').run(id);
+  db.prepare('UPDATE sessions SET detail_data = NULL, detail_fetched_at = NULL WHERE id = ?').run(
+    id,
+  );
   const fresh = await getSessionDetail(id); // detail_data is null -> re-fetches and stores
   db.prepare(
     `UPDATE sessions SET start_date = @start_date, match_type = @match_type,
