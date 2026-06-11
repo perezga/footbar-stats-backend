@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "biome check src",
     "lint:fix": "biome check --write src",
+    "test": "vitest run",
     "cert": "bash scripts/gen-cert.sh"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.9.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.8"
   }
 }

@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const dbPath = resolve(here, '..', 'data', 'footbar.db');
+// DB_PATH override lets tests/CI point at a throwaway database.
+const dbPath = process.env.DB_PATH ?? resolve(here, '..', 'data', 'footbar.db');
 mkdirSync(dirname(dbPath), { recursive: true });
 
 export const db = new Database(dbPath);
