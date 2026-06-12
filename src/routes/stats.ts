@@ -3,6 +3,7 @@ import {
   computeAverages,
   computeGoalsRecord,
   computeGoalsTrend,
+  computeLevel,
   computeRecords,
   computeTrend,
   TREND_METRICS,
@@ -50,6 +51,9 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
       };
     },
   );
+
+  // Player level derived from the last matches (see computeLevel).
+  app.get('/api/stats/level', async () => computeLevel());
 
   app.get<{ Querystring: { match_type?: string; exclude?: string; window?: string } }>(
     '/api/stats/averages',

@@ -199,6 +199,141 @@ export async function computeGoalsRecord(): Promise<RecordEntry | null> {
   };
 }
 
+// --- Player level (derived from the last LEVEL_WINDOW matches) ---
+
+export const LEVEL_WINDOW = 3;
+
+export type PlayerLevelId = 'principiante' | 'novato' | 'amateur' | 'pro' | 'goat';
+
+export const LEVEL_NAMES: readonly PlayerLevelId[] = [
+  'principiante',
+  'novato',
+  'amateur',
+  'pro',
+  'goat',
+];
+
+export interface LevelReason {
+  metric: string;
+  /** Criterion name shown to the user (Spanish, like the profile UI). */
+  label: string;
+  /** Formatted value ('5.2 km', '27.4 km/h'). */
+  display: string;
+  /** Level this criterion alone would give (0..4 index into LEVEL_NAMES). */
+  level: number;
+  level_name: PlayerLevelId;
+}
+
+export interface LevelMatchRef {
+  session_id: number;
+  title: string;
+  start_date: string;
+}
+
+export interface LevelResult {
+  /** Null when no match details are cached yet. */
+  level: PlayerLevelId | null;
+  level_index: number | null;
+  window: number;
+  /** The matches the level was derived from (newest first). */
+  matches: LevelMatchRef[];
+  reasons: LevelReason[];
+}
+
+/** Highest level whose threshold the value reaches (0..4). */
+function levelOf(value: number, thresholds: readonly number[]): number {
+  let lvl = 0;
+  thresholds.forEach((t, i) => {
+    if (value >= t) lvl = i + 1;
+  });
+  return lvl;
+}
+
+/** Average goals per match over the window's RFAF-linked matches, or null. */
+async function goalsPerMatch(sessionIds: number[]): Promise<number | null> {
+  const wanted = new Set(sessionIds);
+  const inWindow = (await playerMatchGoals()).filter(
+    (m) => m.session_id !== null && wanted.has(m.session_id),
+  );
+  if (inWindow.length === 0) return null;
+  return inWindow.reduce((sum, m) => sum + m.goals, 0) / inWindow.length;
+}
+
+/**
+ * Player level from his last `LEVEL_WINDOW` matches ('11'/'ss' sessions with a
+ * cached detail). Each criterion maps its per-match value onto the level scale
+ * via per-level thresholds; the overall level is the rounded mean. Criteria
+ * without data (no RFAF goals, metric missing) simply drop out.
+ */
+export async function computeLevel(): Promise<LevelResult> {
+  const pool = allDetails()
+    .filter((s) => s.match_type === '11' || s.match_type === 'ss')
+    .sort((a, b) => b.start_date.localeCompare(a.start_date))
+    .slice(0, LEVEL_WINDOW);
+  if (pool.length === 0) {
+    return { level: null, level_index: null, window: LEVEL_WINDOW, matches: [], reasons: [] };
+  }
+
+  const nums = (key: keyof SessionAPI): number[] =>
+    pool.map((s) => s[key]).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  const avg = (key: keyof SessionAPI): number | null => {
+    const vals = nums(key);
+    return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  };
+  const max = (key: keyof SessionAPI): number | null => {
+    const vals = nums(key);
+    return vals.length > 0 ? Math.max(...vals) : null;
+  };
+
+  const reasons: LevelReason[] = [];
+  const add = (
+    metric: string,
+    label: string,
+    value: number | null,
+    thresholds: readonly number[],
+    display: (v: number) => string,
+  ): void => {
+    if (value === null) return;
+    const level = levelOf(value, thresholds);
+    reasons.push({
+      metric,
+      label,
+      display: display(value),
+      level,
+      level_name: LEVEL_NAMES[level]!,
+    });
+  };
+
+  const km = (v: number) => `${(v / 1000).toFixed(1)} km`;
+  const kmh = (v: number) => `${(v * 3.6).toFixed(1)} km/h`;
+
+  add('distance', 'Distancia por partido', avg('distance'), [3000, 4500, 6000, 8000], km);
+  // 18 / 22 / 25 / 30 km/h expressed in m/s (the metric's unit).
+  add('sprint_speed', 'Velocidad punta', max('sprint_speed'), [5.0, 6.11, 6.94, 8.33], kmh);
+  add('sprint_count', 'Sprints por partido', avg('sprint_count'), [5, 10, 18, 28], (v) =>
+    v.toFixed(0),
+  );
+  add('pass_count', 'Pases por partido', avg('pass_count'), [10, 20, 35, 50], (v) => v.toFixed(0));
+  // score_stars is deliberately not a criterion: its scale is undocumented and
+  // most cached sessions carry 0 (unrated), which would drag the level down.
+  add(
+    'goals',
+    'Goles por partido',
+    await goalsPerMatch(pool.map((s) => s.id)),
+    [0.25, 0.5, 1, 1.5],
+    (v) => v.toFixed(1),
+  );
+
+  const overall = Math.round(reasons.reduce((sum, r) => sum + r.level, 0) / reasons.length);
+  return {
+    level: LEVEL_NAMES[overall]!,
+    level_index: overall,
+    window: LEVEL_WINDOW,
+    matches: pool.map((s) => ({ session_id: s.id, title: s.title, start_date: s.start_date })),
+    reasons,
+  };
+}
+
 /** Metrics averaged for the session-vs-average comparison (the detail tiles). */
 export const AVERAGE_METRICS = [
   'distance',
