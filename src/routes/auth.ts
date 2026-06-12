@@ -138,28 +138,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   );
 
   app.get('/auth/status', async (req, reply) => {
-    let userId = currentUserId(req);
-    let tokens = loadTokens();
-    if (userId === null || tokens === null || tokens.user_id !== userId) {
-      // Auto-provision the browser session: the scheduler keeps server-side
-      // Footbar tokens alive, so a visitor with no (or a stale) cookie can be
-      // signed in on this very response — the login page never shows.
-      try {
-        tokens = await getValidAccessToken();
-        if (tokens.user_id) {
-          const sid = newSessionId();
-          db.prepare('INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)').run(
-            sid,
-            tokens.user_id,
-            Date.now(),
-          );
-          setSessionCookie(reply, sid);
-          userId = tokens.user_id;
-        }
-      } catch (e) {
-        req.log.warn(e, 'auto-login unavailable, manual login required');
-      }
-    }
+    const userId = currentUserId(req);
+    const tokens = userId !== null ? loadTokens(userId) : null;
+
     return {
       authenticated: userId !== null && tokens !== null && tokens.user_id === userId,
       user_id: userId,
@@ -171,10 +152,15 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     if (raw) {
       const unsigned = req.unsignCookie(raw);
       if (unsigned.valid && unsigned.value) {
-        db.prepare('DELETE FROM app_sessions WHERE sid = ?').run(unsigned.value);
+        const row = db
+          .prepare('SELECT user_id FROM app_sessions WHERE sid = ?')
+          .get(unsigned.value) as { user_id: number } | undefined;
+        if (row) {
+          clearTokens(row.user_id);
+          db.prepare('DELETE FROM app_sessions WHERE sid = ?').run(unsigned.value);
+        }
       }
     }
-    clearTokens();
     reply.clearCookie(SESSION_COOKIE, { path: '/' });
     return { ok: true };
   });

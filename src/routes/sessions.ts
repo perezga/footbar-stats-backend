@@ -19,11 +19,14 @@ import {
 import type { MatchType } from '../footbar/types.js';
 
 /** Build the fixture index, tolerating RFAF being slow/unavailable. */
-async function safeFixtureIndex(app: FastifyInstance): Promise<Map<string, DayFixture>> {
+async function safeFixtureIndex(
+  app: FastifyInstance,
+  userId: number,
+): Promise<Map<string, DayFixture>> {
   try {
-    return await buildFixtureIndex();
+    return await buildFixtureIndex(userId);
   } catch (e) {
-    app.log.warn({ err: e }, 'fixture enrichment skipped: RFAF fetch failed');
+    app.log.warn({ err: e }, `fixture enrichment skipped for user ${userId}: RFAF fetch failed`);
     return new Map();
   }
 }
@@ -41,25 +44,30 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       include_fixtures?: string;
     };
   }>('/api/sessions', async (req) => {
-    await ensureListFresh(false);
+    const userId = req.userId!;
+    await ensureListFresh(userId, false);
     const q = req.query;
     const matchType =
       q.match_type && MATCH_TYPES.has(q.match_type as MatchType)
         ? (q.match_type as MatchType)
         : undefined;
-    const index = await safeFixtureIndex(app);
+    const index = await safeFixtureIndex(app, userId);
 
     if (q.include_fixtures === '1') {
       // Merged view: every session plus the season's fixtures the tracker
       // didn't record (id null), one date-sorted paginated feed.
-      const sessions = listAllSessions(matchType).map((s) => enrichSession(s, index));
+      const sessions = await Promise.all(
+        listAllSessions(userId, matchType).map((s) => enrichSession(s, index, userId)),
+      );
       const rows: ((typeof sessions)[number] | FixtureOnlySession)[] = [...sessions];
       if (!matchType || matchType === '11') {
         const sessionDays = new Set(
           sessions.filter((s) => s.match_type === '11').map((s) => madridDateKey(s.start_date)),
         );
         for (const [date, day] of index) {
-          if (!sessionDays.has(date)) rows.push(fixtureOnlySession(date, day));
+          if (!sessionDays.has(date)) {
+            rows.push(await fixtureOnlySession(date, day, userId));
+          }
         }
       }
       rows.sort((a, b) => (a.start_date < b.start_date ? 1 : -1));
@@ -70,44 +78,51 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
       return {
         count: combined.length,
         results: combined.slice(offset, offset + limit),
-        last_sync: getLastSync(),
+        last_sync: getLastSync(userId),
       };
     }
 
     const page = listSessions({
+      userId,
       matchType,
       from: q.from,
       to: q.to,
       limit: q.limit ? Number(q.limit) : undefined,
       offset: q.offset ? Number(q.offset) : undefined,
     });
-    return { ...page, results: page.results.map((s) => enrichSession(s, index)) };
+    return {
+      ...page,
+      results: await Promise.all(page.results.map((s) => enrichSession(s, index, userId))),
+    };
   });
 
-  app.post('/api/sessions/refresh', async () => {
-    await ensureListFresh(true);
-    return { ok: true, last_sync: getLastSync() };
+  app.post('/api/sessions/refresh', async (req) => {
+    const userId = req.userId!;
+    await ensureListFresh(userId, true);
+    return { ok: true, last_sync: getLastSync(userId) };
   });
 
   app.get<{ Params: { id: string } }>('/api/sessions/:id', async (req, reply) => {
+    const userId = req.userId!;
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) {
       reply.code(400);
       return { error: 'Invalid id' };
     }
-    const detail = await getSessionDetail(id);
-    const index = await safeFixtureIndex(app);
-    return enrichSession(detail, index);
+    const detail = await getSessionDetail(id, userId);
+    const index = await safeFixtureIndex(app, userId);
+    return enrichSession(detail, index, userId);
   });
 
   app.post<{ Params: { id: string } }>('/api/sessions/:id/refresh', async (req, reply) => {
+    const userId = req.userId!;
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) {
       reply.code(400);
       return { error: 'Invalid id' };
     }
-    const detail = await refreshSessionDetail(id);
-    const index = await safeFixtureIndex(app);
-    return enrichSession(detail, index);
+    const detail = await refreshSessionDetail(id, userId);
+    const index = await safeFixtureIndex(app, userId);
+    return enrichSession(detail, index, userId);
   });
 }

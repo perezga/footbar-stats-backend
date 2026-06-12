@@ -11,15 +11,15 @@ class FootbarError extends Error {
   }
 }
 
-async function call<T>(path: string, attempt = 0): Promise<T> {
-  const tokens = await getValidAccessToken();
+async function call<T>(path: string, userId: number, attempt = 0): Promise<T> {
+  const tokens = await getValidAccessToken(userId);
   const res = await fetch(`${FOOTBAR_BASE}${path}`, {
     headers: { Authorization: `Bearer ${tokens.access_token}` },
   });
   if (res.status === 401 && attempt === 0) {
-    const current = loadTokens();
-    if (current) await refreshAccessToken(current.refresh_token);
-    return call<T>(path, 1);
+    const current = loadTokens(userId);
+    if (current) await refreshAccessToken(current.refresh_token, userId);
+    return call<T>(path, userId, 1);
   }
   if (!res.ok) {
     const text = await res.text();
@@ -29,18 +29,21 @@ async function call<T>(path: string, attempt = 0): Promise<T> {
 }
 
 export async function fetchProfile(userId: number): Promise<ProfileAPI> {
-  const page = await call<{ results: ProfileAPI[] }>(`/v1/profile/detail/?user_id=${userId}`);
+  const page = await call<{ results: ProfileAPI[] }>(
+    `/v1/profile/detail/?user_id=${userId}`,
+    userId,
+  );
   const profile = page.results[0];
   if (!profile) throw new FootbarError(404, `Profile ${userId} not found`);
   return profile;
 }
 
-export function fetchSessionList(): Promise<PaginatedSessionList> {
-  return call<PaginatedSessionList>('/v1/session/list/');
+export function fetchSessionList(userId: number): Promise<PaginatedSessionList> {
+  return call<PaginatedSessionList>('/v1/session/list/', userId);
 }
 
-export async function fetchSessionDetail(id: number): Promise<SessionAPI> {
-  const page = await call<{ results: SessionAPI[] }>(`/v1/session/detail/?id=${id}`);
+export async function fetchSessionDetail(id: number, userId: number): Promise<SessionAPI> {
+  const page = await call<{ results: SessionAPI[] }>(`/v1/session/detail/?id=${id}`, userId);
   const session = page.results[0];
   if (!session) throw new FootbarError(404, `Session ${id} not found`);
   return session;

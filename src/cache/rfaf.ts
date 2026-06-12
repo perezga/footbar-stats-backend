@@ -72,34 +72,37 @@ async function load<T>(key: string, fetch: () => Promise<T>, force: boolean): Pr
 }
 
 /**
- * Cached general-stats response for the tracked player. One fetch per season
+ * Cached general-stats response for a player. One fetch per season
  * feeds the player-stats view, the seasons list, and the season's
  * competition/group/team ids for the league views.
  */
-function loadGeneral(seasonId: string, force = false): Promise<Cached<unknown>> {
+function loadGeneral(playerId: string, seasonId: string, force = false): Promise<Cached<unknown>> {
   return load(
-    `general:${seasonId}`,
-    () => fetchPlayerGeneralStats(env.RFAF_CODPLAYER, seasonId),
+    `general:${playerId}:${seasonId}`,
+    () => fetchPlayerGeneralStats(playerId, seasonId),
     force,
   );
 }
 
-async function seasonContext(seasonId: string): Promise<SeasonContext | null> {
-  return pickSeasonContext((await loadGeneral(seasonId)).results);
+async function seasonContext(playerId: string, seasonId: string): Promise<SeasonContext | null> {
+  return pickSeasonContext((await loadGeneral(playerId, seasonId)).results);
 }
 
-export async function getSeasons(): Promise<Cached<Season[]> & { current: string }> {
-  const g = await loadGeneral(env.RFAF_SEASON);
+export async function getSeasons(
+  playerId = env.RFAF_CODPLAYER,
+): Promise<Cached<Season[]> & { current: string }> {
+  const g = await loadGeneral(playerId, env.RFAF_SEASON);
   return { results: mapSeasons(g.results), fetched_at: g.fetched_at, current: env.RFAF_SEASON };
 }
 
 export async function getStandings(
   force = false,
   seasonId = env.RFAF_SEASON,
+  playerId = env.RFAF_CODPLAYER,
 ): Promise<Cached<Standing[]>> {
-  const ctx = await seasonContext(seasonId);
+  const ctx = await seasonContext(playerId, seasonId);
   return load(
-    `standings:${seasonId}`,
+    `standings:${seasonId}`, // League data is shared, key doesn't need playerId
     async () =>
       ctx
         ? markStandings(mapStandings(await fetchClassification(ctx.group)), Number(ctx.team))
@@ -111,10 +114,11 @@ export async function getStandings(
 export async function getScorers(
   force = false,
   seasonId = env.RFAF_SEASON,
+  playerId = env.RFAF_CODPLAYER,
 ): Promise<Cached<Scorer[]>> {
-  const ctx = await seasonContext(seasonId);
+  const ctx = await seasonContext(playerId, seasonId);
   return load(
-    `scorers:${seasonId}`,
+    `scorers:${seasonId}`, // League data is shared
     async () =>
       ctx ? markScorers(mapScorers(await fetchScorers(ctx.competition, ctx.group))) : [],
     force,
@@ -124,10 +128,11 @@ export async function getScorers(
 export async function getFixtures(
   force = false,
   seasonId = env.RFAF_SEASON,
+  playerId = env.RFAF_CODPLAYER,
 ): Promise<Cached<Fixture[]>> {
-  const ctx = await seasonContext(seasonId);
+  const ctx = await seasonContext(playerId, seasonId);
   return load(
-    `fixtures:${seasonId}`,
+    `fixtures:${seasonId}`, // League data is shared
     async () =>
       ctx
         ? mapFixtures(await fetchCalendarTeam(ctx.competition, ctx.group, ctx.team), ctx.team)
@@ -141,14 +146,7 @@ export async function getPlayerStats(
   playerId = env.RFAF_CODPLAYER,
   seasonId = env.RFAF_SEASON,
 ): Promise<Cached<PlayerStats>> {
-  if (playerId !== env.RFAF_CODPLAYER) {
-    // Only the tracked player is cached; explicit overrides go live.
-    return {
-      results: mapPlayerStats(await fetchPlayerGeneralStats(playerId, seasonId)),
-      fetched_at: Date.now(),
-    };
-  }
-  const g = await loadGeneral(seasonId, force);
+  const g = await loadGeneral(playerId, seasonId, force);
   return { results: mapPlayerStats(g.results), fetched_at: g.fetched_at };
 }
 
@@ -156,30 +154,34 @@ export async function getPlayerStats(
  * The played-matches endpoint wants the season label ('2025-2026'), not the
  * id; resolve it from the seasons list in the cached general stats.
  */
-async function seasonName(seasonId: string): Promise<string | null> {
-  const seasons = mapSeasons((await loadGeneral(env.RFAF_SEASON)).results);
+async function seasonName(playerId: string, seasonId: string): Promise<string | null> {
+  const seasons = mapSeasons((await loadGeneral(playerId, env.RFAF_SEASON)).results);
   return seasons.find((s) => s.id === seasonId)?.name ?? null;
 }
 
-/** The tracked player's played matches with his personal events. */
+/** A player's played matches with his personal events. */
 export async function getPlayerMatches(
   force = false,
   seasonId = env.RFAF_SEASON,
+  playerId = env.RFAF_CODPLAYER,
 ): Promise<Cached<PlayerMatch[]>> {
   return load(
-    `player-matches:${seasonId}`,
+    `player-matches:${playerId}:${seasonId}`,
     async () => {
-      const name = await seasonName(seasonId);
-      return name ? mapPlayerMatches(await fetchPlayerMatchs(env.RFAF_CODPLAYER, name)) : [];
+      const name = await seasonName(playerId, seasonId);
+      return name ? mapPlayerMatches(await fetchPlayerMatchs(playerId, name)) : [];
     },
     force,
   );
 }
 
-export async function refreshAll(seasonId = env.RFAF_SEASON): Promise<void> {
-  await loadGeneral(seasonId, true);
-  await getStandings(true, seasonId);
-  await getScorers(true, seasonId);
-  await getFixtures(true, seasonId);
-  await getPlayerMatches(true, seasonId);
+export async function refreshAll(
+  seasonId = env.RFAF_SEASON,
+  playerId = env.RFAF_CODPLAYER,
+): Promise<void> {
+  await loadGeneral(playerId, seasonId, true);
+  await getStandings(true, seasonId, playerId);
+  await getScorers(true, seasonId, playerId);
+  await getFixtures(true, seasonId, playerId);
+  await getPlayerMatches(true, seasonId, playerId);
 }

@@ -19,39 +19,47 @@ interface TokenResponse {
   user?: { id: number };
 }
 
-export function loadTokens(): StoredTokens | null {
+export function loadTokens(userId?: number): StoredTokens | null {
+  if (userId === undefined) {
+    // If no specific user requested, return the first one (for backward compat/headless).
+    const row = db
+      .prepare(
+        'SELECT access_token, refresh_token, expires_at, user_id, scope FROM oauth_tokens LIMIT 1',
+      )
+      .get() as StoredTokens | undefined;
+    return row ?? null;
+  }
   const row = db
     .prepare(
-      'SELECT access_token, refresh_token, expires_at, user_id, scope FROM oauth_tokens WHERE id = 1',
+      'SELECT access_token, refresh_token, expires_at, user_id, scope FROM oauth_tokens WHERE user_id = ?',
     )
-    .get() as StoredTokens | undefined;
+    .get(userId) as StoredTokens | undefined;
   return row ?? null;
 }
 
 export function saveTokens(t: StoredTokens): void {
   db.prepare(
-    `INSERT INTO oauth_tokens (id, access_token, refresh_token, expires_at, user_id, scope)
-     VALUES (1, @access_token, @refresh_token, @expires_at, @user_id, @scope)
-     ON CONFLICT(id) DO UPDATE SET
+    `INSERT INTO oauth_tokens (user_id, access_token, refresh_token, expires_at, scope)
+     VALUES (@user_id, @access_token, @refresh_token, @expires_at, @scope)
+     ON CONFLICT(user_id) DO UPDATE SET
        access_token = excluded.access_token,
        refresh_token = excluded.refresh_token,
        expires_at = excluded.expires_at,
-       user_id = excluded.user_id,
        scope = excluded.scope`,
   ).run(t);
 }
 
-export function clearTokens(): void {
-  db.prepare('DELETE FROM oauth_tokens WHERE id = 1').run();
+export function clearTokens(userId: number): void {
+  db.prepare('DELETE FROM oauth_tokens WHERE user_id = ?').run(userId);
 }
 
-function tokenToStored(resp: TokenResponse): StoredTokens {
+function tokenToStored(resp: TokenResponse, userId?: number): StoredTokens {
   return {
     access_token: resp.access_token,
     refresh_token: resp.refresh_token,
     expires_at: Date.now() + resp.expires_in * 1000 - 60_000,
-    // Password grants don't echo the user; keep the id from a previous login.
-    user_id: resp.user?.id ?? loadTokens()?.user_id ?? 0,
+    // Password grants don't echo the user; keep the id from a previous login or the requested one.
+    user_id: resp.user?.id ?? userId ?? loadTokens()?.user_id ?? 0,
     scope: resp.scope,
   };
 }
@@ -87,7 +95,10 @@ export async function exchangeAuthCode(params: {
   return stored;
 }
 
-export async function refreshAccessToken(refreshToken: string): Promise<StoredTokens> {
+export async function refreshAccessToken(
+  refreshToken: string,
+  userId: number,
+): Promise<StoredTokens> {
   const body = new URLSearchParams({
     client_id: env.FOOTBAR_CLIENT_ID,
     client_secret: env.FOOTBAR_CLIENT_SECRET,
@@ -107,7 +118,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<StoredTo
     throw new Error(`Refresh failed: ${res.status} ${text}`);
   }
   const json = (await res.json()) as TokenResponse;
-  const stored = tokenToStored(json);
+  const stored = tokenToStored(json, userId);
   saveTokens(stored);
   return stored;
 }
@@ -146,15 +157,23 @@ export async function loginWithPassword(): Promise<StoredTokens> {
   return stored;
 }
 
-export async function getValidAccessToken(): Promise<StoredTokens> {
-  const tokens = loadTokens();
-  if (!tokens) return loginWithPassword();
+export async function getValidAccessToken(userId?: number): Promise<StoredTokens> {
+  const tokens = loadTokens(userId);
+  if (!tokens) {
+    // Only auto-login with password if we are looking for the primary user
+    // or if no user was specified.
+    if (userId === undefined || (env.FOOTBAR_USERNAME && tokens === null)) {
+      return loginWithPassword();
+    }
+    throw new Error(`No tokens found for user ${userId}`);
+  }
   if (Date.now() < tokens.expires_at) return tokens;
   try {
-    return await refreshAccessToken(tokens.refresh_token);
+    return await refreshAccessToken(tokens.refresh_token, tokens.user_id);
   } catch (e) {
     // The refresh token can rot (rotation, revocation); re-login if we can.
-    if (env.FOOTBAR_USERNAME && env.FOOTBAR_PASSWORD) return loginWithPassword();
+    if (env.FOOTBAR_USERNAME && tokens.user_id === loadTokens()?.user_id)
+      return loginWithPassword();
     throw e;
   }
 }

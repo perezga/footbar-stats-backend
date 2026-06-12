@@ -19,11 +19,12 @@ function parseMatchType(raw?: string): MatchType | undefined {
 
 export async function statsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { match_type?: string } }>('/api/stats/records', async (req) => {
+    const userId = req.userId!;
     const matchType = parseMatchType(req.query.match_type);
-    const records = computeRecords(matchType);
+    const records = computeRecords(userId, matchType);
     // Goals come from RFAF match events, so they only exist for league games.
     if (!matchType || matchType === '11') {
-      const goals = await computeGoalsRecord();
+      const goals = await computeGoalsRecord(userId);
       if (goals) records.push(goals);
     }
     return { match_type: matchType ?? null, records };
@@ -32,6 +33,7 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { metric?: string; limit?: string; match_type?: string } }>(
     '/api/stats/trends',
     async (req, reply) => {
+      const userId = req.userId!;
       const metric = req.query.metric as TrendMetric | 'goals' | undefined;
       if (!metric || (metric !== 'goals' && !TREND_METRICS.includes(metric))) {
         reply.code(400);
@@ -41,23 +43,25 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
       const matchType = parseMatchType(req.query.match_type);
       if (metric === 'goals') {
         // Goals come from RFAF match events, so they only exist for league games.
-        const points = matchType && matchType !== '11' ? [] : await computeGoalsTrend(limit);
+        const points =
+          matchType && matchType !== '11' ? [] : await computeGoalsTrend(userId, limit);
         return { metric, match_type: matchType ?? null, points };
       }
       return {
         metric,
         match_type: matchType ?? null,
-        points: computeTrend(metric, limit, matchType),
+        points: computeTrend(userId, metric, limit, matchType),
       };
     },
   );
 
   // Player level derived from the last matches (see computeLevel).
-  app.get('/api/stats/level', async () => computeLevel());
+  app.get('/api/stats/level', async (req) => computeLevel(req.userId!));
 
   app.get<{ Querystring: { match_type?: string; exclude?: string; window?: string } }>(
     '/api/stats/averages',
     async (req) => {
+      const userId = req.userId!;
       const matchType = parseMatchType(req.query.match_type);
       const exclude = Number(req.query.exclude);
       const window = Math.min(
@@ -65,6 +69,7 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
         100,
       );
       const result = computeAverages(
+        userId,
         matchType,
         Number.isFinite(exclude) ? exclude : undefined,
         window,

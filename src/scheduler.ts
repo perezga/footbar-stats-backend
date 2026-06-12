@@ -3,7 +3,7 @@ import { invalidateFixtureIndex } from './cache/fixtureLink.js';
 import { getProfile } from './cache/profile.js';
 import { refreshAll } from './cache/rfaf.js';
 import { ensureListFresh, getSessionDetail } from './cache/sessions.js';
-import { db, getSyncState, setSyncState } from './db.js';
+import { db, getRfafPlayerId, getSyncState, setSyncState } from './db.js';
 import { env } from './env.js';
 import { loadTokens } from './oauth/tokens.js';
 
@@ -18,42 +18,52 @@ const CHECK_EVERY_MS = 15 * 60 * 1000;
 /** How soon a failed run becomes due again. */
 const RETRY_MS = 60 * 60 * 1000;
 
-async function syncFootbar(log: FastifyBaseLogger): Promise<void> {
-  await ensureListFresh(true);
+async function syncFootbarForUser(userId: number, log: FastifyBaseLogger): Promise<void> {
+  log.info(`scheduler: syncing Footbar for user ${userId}`);
+  await ensureListFresh(userId, true);
   // The app fetches session details lazily; prefetch whatever is missing so
   // records/trends cover every session without anyone opening it first.
-  const missing = db.prepare('SELECT id FROM sessions WHERE detail_data IS NULL').all() as {
+  const missing = db
+    .prepare('SELECT id FROM sessions WHERE user_id = ? AND detail_data IS NULL')
+    .all(userId) as {
     id: number;
   }[];
   for (const { id } of missing) {
     try {
-      await getSessionDetail(id);
+      await getSessionDetail(id, userId);
     } catch (e) {
-      log.warn(e, `scheduler: session ${id} detail fetch failed`);
+      log.warn(e, `scheduler: session ${id} detail fetch failed for user ${userId}`);
     }
   }
-  const userId = loadTokens()?.user_id;
-  if (userId) {
-    await getProfile(userId, true);
-  } else {
-    // Password-grant logins don't reveal the user id; it appears after the
-    // first browser login and is kept from then on.
-    log.warn('scheduler: Footbar user id unknown, skipping profile sync');
-  }
+  await getProfile(userId, true);
 }
 
 export async function runSync(log: FastifyBaseLogger): Promise<void> {
   log.info('scheduler: sync started');
   let ok = true;
-  try {
-    await syncFootbar(log);
-    log.info('scheduler: Footbar synced');
-  } catch (e) {
-    ok = false;
-    log.error(e, 'scheduler: Footbar sync failed');
+
+  const users = db.prepare('SELECT user_id FROM oauth_tokens').all() as { user_id: number }[];
+  const seenPlayers = new Set<string>();
+
+  for (const { user_id } of users) {
+    try {
+      await syncFootbarForUser(user_id, log);
+      const playerId = getRfafPlayerId(user_id);
+      if (playerId) {
+        await refreshAll(env.RFAF_SEASON, playerId);
+        seenPlayers.add(playerId);
+      }
+    } catch (e) {
+      ok = false;
+      log.error(e, `scheduler: sync failed for user ${user_id}`);
+    }
   }
+
   try {
-    await refreshAll();
+    // Ensure the default player is also synced if not already covered.
+    if (!seenPlayers.has(env.RFAF_CODPLAYER)) {
+      await refreshAll(env.RFAF_SEASON, env.RFAF_CODPLAYER);
+    }
     invalidateFixtureIndex();
     log.info('scheduler: RFAF synced');
   } catch (e) {
@@ -64,8 +74,8 @@ export async function runSync(log: FastifyBaseLogger): Promise<void> {
   // waiting a full cycle (but never sooner — avoids 15-minute retry storms).
   const intervalMs = env.SYNC_INTERVAL_HOURS * 60 * 60 * 1000;
   const stamp = ok ? Date.now() : Date.now() - Math.max(intervalMs - RETRY_MS, 0);
-  setSyncState(LAST_RUN_KEY, stamp.toString());
-  setSyncState(LAST_RESULT_KEY, ok ? 'ok' : 'error');
+  setSyncState(LAST_RUN_KEY, stamp.toString(), 0); // Global sync state
+  setSyncState(LAST_RESULT_KEY, ok ? 'ok' : 'error', 0);
   log.info(`scheduler: sync finished (${ok ? 'ok' : 'with errors'})`);
 }
 

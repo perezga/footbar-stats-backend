@@ -8,20 +8,21 @@ const LIST_TTL_MS = 60 * 60 * 1000;
 const LAST_SYNC_KEY = 'last_list_sync';
 
 const upsertList = db.prepare(
-  `INSERT INTO sessions (id, start_date, match_type, position, list_data)
-   VALUES (@id, @start_date, @match_type, @position, @list_data)
-   ON CONFLICT(id) DO UPDATE SET
+  `INSERT INTO sessions (user_id, id, start_date, match_type, position, list_data)
+   VALUES (@user_id, @id, @start_date, @match_type, @position, @list_data)
+   ON CONFLICT(user_id, id) DO UPDATE SET
      start_date = excluded.start_date,
      match_type = excluded.match_type,
      position = excluded.position,
      list_data = excluded.list_data`,
 );
 
-async function syncList(): Promise<void> {
-  const page = await fetchSessionList();
+async function syncList(userId: number): Promise<void> {
+  const page = await fetchSessionList(userId);
   const writeAll = db.transaction((items: SessionListAPI[]) => {
     for (const s of items) {
       upsertList.run({
+        user_id: userId,
         id: s.id,
         start_date: s.start_date,
         match_type: s.match_type,
@@ -32,16 +33,17 @@ async function syncList(): Promise<void> {
   });
   writeAll(page.results);
   invalidateDetailsCache();
-  setSyncState(LAST_SYNC_KEY, Date.now().toString());
+  setSyncState(LAST_SYNC_KEY, Date.now().toString(), userId);
 }
 
-export async function ensureListFresh(force = false): Promise<void> {
-  const last = Number(getSyncState(LAST_SYNC_KEY) ?? 0);
+export async function ensureListFresh(userId: number, force = false): Promise<void> {
+  const last = Number(getSyncState(LAST_SYNC_KEY, userId) ?? 0);
   if (!force && Date.now() - last < LIST_TTL_MS) return;
-  await syncList();
+  await syncList(userId);
 }
 
 export interface SessionListFilters {
+  userId: number;
   matchType?: MatchType;
   from?: string;
   to?: string;
@@ -56,8 +58,8 @@ export interface SessionListResult {
 }
 
 export function listSessions(filters: SessionListFilters): SessionListResult {
-  const where: string[] = [];
-  const params: Record<string, string | number> = {};
+  const where: string[] = ['user_id = @user_id'];
+  const params: Record<string, string | number> = { user_id: filters.userId };
   if (filters.matchType) {
     where.push('match_type = @match_type');
     params.match_type = filters.matchType;
@@ -86,48 +88,57 @@ export function listSessions(filters: SessionListFilters): SessionListResult {
   return {
     count,
     results: rows.flatMap((r) => tryParse<SessionListAPI>(r.list_data) ?? []),
-    last_sync: Number(getSyncState(LAST_SYNC_KEY) ?? 0),
+    last_sync: Number(getSyncState(LAST_SYNC_KEY, filters.userId) ?? 0),
   };
 }
 
-/** Every cached session list row, newest first (for merged views). */
-export function listAllSessions(matchType?: MatchType): SessionListAPI[] {
+/** Every cached session list row for a user, newest first (for merged views). */
+export function listAllSessions(userId: number, matchType?: MatchType): SessionListAPI[] {
   const rows = (
     matchType
       ? db
-          .prepare('SELECT list_data FROM sessions WHERE match_type = ? ORDER BY start_date DESC')
-          .all(matchType)
-      : db.prepare('SELECT list_data FROM sessions ORDER BY start_date DESC').all()
+          .prepare(
+            'SELECT list_data FROM sessions WHERE user_id = ? AND match_type = ? ORDER BY start_date DESC',
+          )
+          .all(userId, matchType)
+      : db
+          .prepare('SELECT list_data FROM sessions WHERE user_id = ? ORDER BY start_date DESC')
+          .all(userId)
   ) as { list_data: string }[];
   return rows.flatMap((r) => tryParse<SessionListAPI>(r.list_data) ?? []);
 }
 
-export async function getSessionDetail(id: number): Promise<SessionAPI> {
+export async function getSessionDetail(id: number, userId: number): Promise<SessionAPI> {
   const row = db
-    .prepare('SELECT detail_data, detail_fetched_at FROM sessions WHERE id = ?')
-    .get(id) as { detail_data: string | null; detail_fetched_at: number | null } | undefined;
+    .prepare('SELECT detail_data, detail_fetched_at FROM sessions WHERE user_id = ? AND id = ?')
+    .get(userId, id) as
+    | { detail_data: string | null; detail_fetched_at: number | null }
+    | undefined;
   if (row?.detail_data) {
     // A corrupt cached detail counts as a miss and is re-fetched below.
     const cached = tryParse<SessionAPI>(row.detail_data);
     if (cached) return cached;
   }
-  const fresh = await fetchSessionDetail(id);
-  const existing = db.prepare('SELECT id FROM sessions WHERE id = ?').get(id) as
-    | { id: number }
-    | undefined;
+  const fresh = await fetchSessionDetail(id, userId);
+  const existing = db
+    .prepare('SELECT id FROM sessions WHERE user_id = ? AND id = ?')
+    .get(userId, id) as { id: number } | undefined;
   if (existing) {
     db.prepare(
-      `UPDATE sessions SET detail_data = @detail_data, detail_fetched_at = @detail_fetched_at WHERE id = @id`,
+      `UPDATE sessions SET detail_data = @detail_data, detail_fetched_at = @detail_fetched_at 
+       WHERE user_id = @user_id AND id = @id`,
     ).run({
+      user_id: userId,
       id: fresh.id,
       detail_data: JSON.stringify(fresh),
       detail_fetched_at: Date.now(),
     });
   } else if (fresh.start_date && fresh.match_type) {
     db.prepare(
-      `INSERT INTO sessions (id, start_date, match_type, position, list_data, detail_data, detail_fetched_at)
-       VALUES (@id, @start_date, @match_type, @position, @list_data, @detail_data, @detail_fetched_at)`,
+      `INSERT INTO sessions (user_id, id, start_date, match_type, position, list_data, detail_data, detail_fetched_at)
+       VALUES (@user_id, @id, @start_date, @match_type, @position, @list_data, @detail_data, @detail_fetched_at)`,
     ).run({
+      user_id: userId,
       id: fresh.id,
       start_date: fresh.start_date,
       match_type: fresh.match_type,
@@ -156,15 +167,16 @@ export async function getSessionDetail(id: number): Promise<SessionAPI> {
  * sync the list metadata (start_date/match_type/…) from the fresh result so a
  * session that was later reclassified/retimed in Footbar is fully corrected.
  */
-export async function refreshSessionDetail(id: number): Promise<SessionAPI> {
-  db.prepare('UPDATE sessions SET detail_data = NULL, detail_fetched_at = NULL WHERE id = ?').run(
-    id,
-  );
-  const fresh = await getSessionDetail(id); // detail_data is null -> re-fetches and stores
+export async function refreshSessionDetail(id: number, userId: number): Promise<SessionAPI> {
+  db.prepare(
+    'UPDATE sessions SET detail_data = NULL, detail_fetched_at = NULL WHERE user_id = ? AND id = ?',
+  ).run(userId, id);
+  const fresh = await getSessionDetail(id, userId); // detail_data is null -> re-fetches and stores
   db.prepare(
     `UPDATE sessions SET start_date = @start_date, match_type = @match_type,
-       position = @position, list_data = @list_data WHERE id = @id`,
+       position = @position, list_data = @list_data WHERE user_id = @user_id AND id = @id`,
   ).run({
+    user_id: userId,
     id: fresh.id,
     start_date: fresh.start_date,
     match_type: fresh.match_type,
@@ -185,6 +197,6 @@ export async function refreshSessionDetail(id: number): Promise<SessionAPI> {
   return fresh;
 }
 
-export function getLastSync(): number {
-  return Number(getSyncState(LAST_SYNC_KEY) ?? 0);
+export function getLastSync(userId: number): number {
+  return Number(getSyncState(LAST_SYNC_KEY, userId) ?? 0);
 }

@@ -1,7 +1,8 @@
+import { getRfafPlayerId } from '../db.js';
 import { env } from '../env.js';
 import type { Position } from '../footbar/types.js';
 import type { Fixture, PlayerMatchEvent } from '../rfaf/types.js';
-import { getFixtures, getPlayerMatches, norm } from './rfaf.js';
+import { getFixtures, getPlayerMatches, norm, seasonContext } from './rfaf.js';
 
 /** A fixture resolved against the tracked team, attached to a session. */
 export interface SessionFixture {
@@ -51,8 +52,9 @@ export function madridDateKey(startDate: string): string | null {
 function toSessionFixture(
   f: Fixture,
   day: Pick<DayFixture, 'events' | 'started' | 'captain'>,
+  ownTeamId: string | null,
 ): SessionFixture {
-  const isHome = norm(f.home).includes(norm(env.RFAF_OWN_TEAM));
+  const isHome = ownTeamId !== null && norm(f.home).includes(norm(ownTeamId));
   return {
     matchday: f.matchday,
     home: f.home,
@@ -76,22 +78,25 @@ function toSessionFixture(
 // request otherwise; a short memo skips the re-parse. Refresh paths call
 // invalidateFixtureIndex() so a manual RFAF refresh shows up immediately.
 const INDEX_TTL_MS = 5 * 60 * 1000;
-let indexMemo: { builtAt: number; index: Map<string, DayFixture> } | null = null;
+const indexCache = new Map<number, { builtAt: number; index: Map<string, DayFixture> }>();
 
 export function invalidateFixtureIndex(): void {
-  indexMemo = null;
+  indexCache.clear();
 }
 
-/** Map of 'YYYY-MM-DD' → fixture + player events. Empty on RFAF failure. */
-export async function buildFixtureIndex(): Promise<Map<string, DayFixture>> {
-  if (indexMemo && Date.now() - indexMemo.builtAt < INDEX_TTL_MS) return indexMemo.index;
-  const { results } = await getFixtures();
+/** Map of 'YYYY-MM-DD' → fixture + player events for a user. Empty on RFAF failure. */
+export async function buildFixtureIndex(userId: number): Promise<Map<string, DayFixture>> {
+  const hit = indexCache.get(userId);
+  if (hit && Date.now() - hit.builtAt < INDEX_TTL_MS) return hit.index;
+
+  const playerId = getRfafPlayerId(userId) ?? env.RFAF_CODPLAYER;
+  const { results } = await getFixtures(false, env.RFAF_SEASON, playerId);
   const index = new Map<string, DayFixture>();
   for (const f of results) {
     if (f.date) index.set(f.date, { fixture: f, events: [] });
   }
   try {
-    for (const m of (await getPlayerMatches()).results) {
+    for (const m of (await getPlayerMatches(false, env.RFAF_SEASON, playerId)).results) {
       const day = m.date ? index.get(m.date) : undefined;
       if (day) {
         day.events = m.events;
@@ -102,7 +107,7 @@ export async function buildFixtureIndex(): Promise<Map<string, DayFixture>> {
   } catch {
     // Events are an optional layer; fixtures alone still enrich sessions.
   }
-  indexMemo = { builtAt: Date.now(), index };
+  indexCache.set(userId, { builtAt: Date.now(), index });
   return index;
 }
 
@@ -122,16 +127,22 @@ export interface FixtureOnlySession {
 }
 
 /** Pseudo session-list row for a fixture the tracker didn't record. */
-export function fixtureOnlySession(date: string, day: DayFixture): FixtureOnlySession {
+export async function fixtureOnlySession(
+  date: string,
+  day: DayFixture,
+  userId: number,
+): Promise<FixtureOnlySession> {
   const f = day.fixture;
   const start = `${date}T${f.time ?? '00:00'}:00`;
+  const playerId = getRfafPlayerId(userId) ?? env.RFAF_CODPLAYER;
+  const ctx = await seasonContext(playerId, env.RFAF_SEASON);
   return {
     id: null,
     start_date: start,
     stop_date: start,
     title: fixtureName(f),
     match_type: '11',
-    fixture: toSessionFixture(f, day),
+    fixture: toSessionFixture(f, day, ctx?.team ?? null),
   };
 }
 
@@ -200,17 +211,22 @@ export function combineLegRows<
  * is the source of truth for the match: its result is attached and its name
  * overwrites the session title.
  */
-export function enrichSession<T extends { start_date: string; match_type: string; title: string }>(
+export async function enrichSession<
+  T extends { start_date: string; match_type: string; title: string },
+>(
   session: T,
   index: Map<string, DayFixture>,
-): T & { fixture?: SessionFixture } {
+  userId: number,
+): Promise<T & { fixture?: SessionFixture }> {
   if (session.match_type !== '11') return session;
   const key = madridDateKey(session.start_date);
   const day = key ? index.get(key) : undefined;
   if (!day) return session;
+  const playerId = getRfafPlayerId(userId) ?? env.RFAF_CODPLAYER;
+  const ctx = await seasonContext(playerId, env.RFAF_SEASON);
   return {
     ...session,
     title: fixtureName(day.fixture),
-    fixture: toSessionFixture(day.fixture, day),
+    fixture: toSessionFixture(day.fixture, day, ctx?.team ?? null),
   };
 }
