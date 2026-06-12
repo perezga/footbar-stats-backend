@@ -86,81 +86,94 @@ db.exec(`
   );
 `);
 
+function tableExists(name: string) {
+  return db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name) != null;
+}
+function columnExists(table: string, column: string) {
+  const info = db.pragma(`table_info(${table})`) as { name: string }[];
+  return info.some((c) => c.name === column);
+}
+
+// --- Migrations for sync_state (multiplayer prep) ---
+if (tableExists('sync_state') && !columnExists('sync_state', 'user_id')) {
+  db.transaction(() => {
+    db.exec(`
+      ALTER TABLE sync_state RENAME TO sync_state_old;
+      CREATE TABLE sync_state (
+        user_id INTEGER NOT NULL DEFAULT 0,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY (user_id, key)
+      );
+      INSERT INTO sync_state (user_id, key, value)
+      SELECT 0, key, value FROM sync_state_old;
+      DROP TABLE sync_state_old;
+    `);
+  })();
+}
+
 // --- Migrations to the new independent identity schema ---
-const tableInfo = db.pragma('table_info(app_sessions)') as { name: string }[];
-// We can detect if we are on the "Footbar-as-ID" schema if app_sessions has no FK to users
-// or if the 'users' table is empty but 'oauth_tokens' has data.
-const hasUsersTable = db
-  .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-  .get();
 
-if (hasUsersTable) {
-  const userCount = (db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c;
-  const hasOldTokens = db
-    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='oauth_tokens'")
-    .get();
+// We only run this if we have the old oauth_tokens table but no users.
+const hasOldTokens = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='oauth_tokens'").get();
+const userCount = (db.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c;
 
-  if (userCount === 0 && hasOldTokens) {
-    db.transaction(() => {
-      // 1. Get all unique Footbar user IDs we have data for.
-      const footbarUserIds = db.prepare('SELECT user_id FROM oauth_tokens').all() as {
-        user_id: number;
-      }[];
+if (hasOldTokens && userCount === 0) {
+  db.transaction(() => {
+    // 1. Identify the primary Footbar user to create the first app user.
+    // Versions vary: columns might be 'id' or 'user_id'.
+    const tokenInfo = db.pragma('table_info(oauth_tokens)') as { name: string }[];
+    const tokenCol = tokenInfo.some(c => c.name === 'user_id') ? 'user_id' : 'id';
+    
+    const row = db.prepare(`SELECT ${tokenCol} AS user_id FROM oauth_tokens LIMIT 1`).get() as { user_id: number } | undefined;
+    if (!row) return; // No data to migrate.
 
-      for (const { user_id } of footbarUserIds) {
-        // 2. Create an internal user for each Footbar user.
-        const res = db
-          .prepare(
-            'INSERT INTO users (email, password_hash, nickname, created_at) VALUES (?, ?, ?, ?)',
-          )
-          .run(
-            `footbar_${user_id}@internal.temp`,
-            'MIGRATED_USER',
-            `Player ${user_id}`,
-            Date.now(),
-          );
-        const appUserId = res.lastInsertRowid as number;
+    const footbarUserId = row.user_id;
 
-        // 3. Migrate oauth_tokens -> footbar_links
-        db.prepare(`
-                    INSERT INTO footbar_links (app_user_id, footbar_user_id, access_token, refresh_token, expires_at, scope)
-                    SELECT ?, user_id, access_token, refresh_token, expires_at, scope FROM oauth_tokens WHERE user_id = ?
-                `).run(appUserId, user_id);
+    // 2. Create the internal user.
+    const res = db
+      .prepare('INSERT INTO users (email, password_hash, nickname, created_at) VALUES (?, ?, ?, ?)')
+      .run(`player_${footbarUserId}@internal`, 'MIGRATED_USER', `Player ${footbarUserId}`, Date.now());
+    const appUserId = res.lastInsertRowid as number;
 
-        // 4. Migrate profile -> footbar_profiles
-        db.prepare(`
-                    INSERT INTO footbar_profiles (app_user_id, data, fetched_at)
-                    SELECT ?, data, fetched_at FROM profile WHERE user_id = ?
-                `).run(appUserId, user_id);
+    // 3. Migrate oauth_tokens -> footbar_links
+    db.prepare(`
+      INSERT INTO footbar_links (app_user_id, footbar_user_id, access_token, refresh_token, expires_at, scope)
+      SELECT ?, ${tokenCol}, access_token, refresh_token, expires_at, scope FROM oauth_tokens
+    `).run(appUserId);
 
-        // 5. Migrate sessions -> footbar_sessions
-        db.prepare(`
-                    INSERT INTO footbar_sessions (app_user_id, id, start_date, match_type, position, list_data, detail_data, detail_fetched_at)
-                    SELECT ?, id, start_date, match_type, position, list_data, detail_data, detail_fetched_at FROM sessions WHERE user_id = ?
-                `).run(appUserId, user_id);
+    // 4. Migrate profile -> footbar_profiles
+    if (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='profile'").get()) {
+      db.prepare(`INSERT INTO footbar_profiles (app_user_id, data, fetched_at) SELECT ?, data, fetched_at FROM profile`).run(appUserId);
+    }
 
-        // 6. Migrate user_rfaf_link -> rfaf_links
-        db.prepare(`
-                    INSERT INTO rfaf_links (app_user_id, rfaf_player_id)
-                    SELECT ?, cod_player FROM user_rfaf_link WHERE user_id = ?
-                `).run(appUserId, user_id);
+    // 5. Migrate sessions -> footbar_sessions
+    if (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'").get()) {
+      db.prepare(`
+        INSERT INTO footbar_sessions (app_user_id, id, start_date, match_type, position, list_data, detail_data, detail_fetched_at)
+        SELECT ?, id, start_date, match_type, position, list_data, detail_data, detail_fetched_at FROM sessions
+      `).run(appUserId);
+    }
 
-        // 7. Update app_sessions to point to new appUserId
-        db.prepare('UPDATE app_sessions SET user_id = ? WHERE user_id = ?').run(appUserId, user_id);
+    // 6. Migrate user_rfaf_link -> rfaf_links
+    if (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='user_rfaf_link'").get()) {
+      db.prepare(`INSERT INTO rfaf_links (app_user_id, rfaf_player_id) SELECT ?, cod_player FROM user_rfaf_link`).run(appUserId);
+    }
 
-        // 8. Update sync_state
-        db.prepare('UPDATE sync_state SET user_id = ? WHERE user_id = ?').run(appUserId, user_id);
-      }
+    // 7. Re-point app_sessions and sync_state
+    db.prepare('UPDATE app_sessions SET user_id = ?').run(appUserId);
+    if (db.pragma('table_info(sync_state)').some((c: any) => c.name === 'user_id')) {
+        db.prepare('UPDATE sync_state SET user_id = ?').run(appUserId);
+    }
 
-      // Clean up old tables
-      db.exec(`
-                DROP TABLE IF EXISTS oauth_tokens;
-                DROP TABLE IF EXISTS profile;
-                DROP TABLE IF EXISTS sessions;
-                DROP TABLE IF EXISTS user_rfaf_link;
-            `);
-    })();
-  }
+    // Clean up
+    db.exec(`
+      DROP TABLE oauth_tokens;
+      DROP TABLE IF EXISTS profile;
+      DROP TABLE IF EXISTS sessions;
+      DROP TABLE IF EXISTS user_rfaf_link;
+    `);
+  })();
 }
 
 export function getSyncState(key: string, userId = 0): string | null {

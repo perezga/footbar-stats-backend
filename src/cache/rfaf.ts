@@ -84,7 +84,7 @@ function loadGeneral(playerId: string, seasonId: string, force = false): Promise
   );
 }
 
-async function seasonContext(playerId: string, seasonId: string): Promise<SeasonContext | null> {
+export async function seasonContext(playerId: string, seasonId: string): Promise<SeasonContext | null> {
   return pickSeasonContext((await loadGeneral(playerId, seasonId)).results);
 }
 
