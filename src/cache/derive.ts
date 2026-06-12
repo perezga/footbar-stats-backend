@@ -1,11 +1,14 @@
 import { db } from '../db.js';
 import type { SessionAPI } from '../footbar/types.js';
 import { tryParse } from '../util/json.js';
+import { madridDateKey } from './fixtureLink.js';
+import { getPlayerMatches } from './rfaf.js';
 
 export interface RecordEntry {
   metric: string;
   value: number;
-  session_id: number;
+  /** Null when the record's match has no Footbar session (fixture-only). */
+  session_id: number | null;
   session_title: string;
   start_date: string;
 }
@@ -114,10 +117,86 @@ export const TREND_METRICS: TrendMetric[] = [
 ];
 
 export interface TrendPoint {
-  session_id: number;
+  /** Null when the point's match has no Footbar session (fixture-only). */
+  session_id: number | null;
   start_date: string;
   title: string;
   value: number;
+}
+
+// --- Goals (from RFAF player-match events, not Footbar session details) ---
+
+interface MatchGoals {
+  date: string;
+  title: string;
+  goals: number;
+  session_id: number | null;
+}
+
+/** Footbar session id per Madrid calendar day (Game sessions only). */
+function sessionIdByDay(): Map<string, number> {
+  const rows = db.prepare("SELECT id, start_date FROM sessions WHERE match_type = '11'").all() as {
+    id: number;
+    start_date: string;
+  }[];
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    const key = madridDateKey(r.start_date);
+    if (key) map.set(key, r.id);
+  }
+  return map;
+}
+
+/**
+ * The player's league matches with his goal count, date-ascending, linked to
+ * the same-day Footbar session when one exists. Empty when RFAF is down so
+ * stats endpoints degrade instead of failing.
+ */
+async function playerMatchGoals(): Promise<MatchGoals[]> {
+  let matches: Awaited<ReturnType<typeof getPlayerMatches>>['results'];
+  try {
+    matches = (await getPlayerMatches()).results;
+  } catch {
+    return [];
+  }
+  const byDay = sessionIdByDay();
+  return matches
+    .flatMap((m) => (m.date === null ? [] : [{ ...m, date: m.date }]))
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((m) => ({
+      date: m.date,
+      title: `${m.home} vs ${m.away}`,
+      goals: m.events.filter((e) => e.kind === 'goal').length,
+      session_id: byDay.get(m.date) ?? null,
+    }));
+}
+
+export async function computeGoalsTrend(limit = 30): Promise<TrendPoint[]> {
+  const matches = await playerMatchGoals();
+  return matches.slice(-limit).map((m) => ({
+    session_id: m.session_id,
+    start_date: m.date,
+    title: m.title,
+    value: m.goals,
+  }));
+}
+
+/** Most goals in one match, or null with no goals yet / RFAF unavailable. */
+export async function computeGoalsRecord(): Promise<RecordEntry | null> {
+  let best: MatchGoals | null = null;
+  for (const m of await playerMatchGoals()) {
+    if (!best || m.goals > best.goals) best = m;
+    // On a tie, prefer a match that can link to its Footbar session.
+    else if (m.goals === best.goals && best.session_id === null && m.session_id !== null) best = m;
+  }
+  if (!best || best.goals === 0) return null;
+  return {
+    metric: 'Most goals in a match',
+    value: best.goals,
+    session_id: best.session_id,
+    session_title: best.title,
+    start_date: best.date,
+  };
 }
 
 /** Metrics averaged for the session-vs-average comparison (the detail tiles). */

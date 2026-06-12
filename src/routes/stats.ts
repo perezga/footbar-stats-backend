@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import {
   computeAverages,
+  computeGoalsRecord,
+  computeGoalsTrend,
   computeRecords,
   computeTrend,
   TREND_METRICS,
@@ -17,19 +19,30 @@ function parseMatchType(raw?: string): MatchType | undefined {
 export async function statsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { match_type?: string } }>('/api/stats/records', async (req) => {
     const matchType = parseMatchType(req.query.match_type);
-    return { match_type: matchType ?? null, records: computeRecords(matchType) };
+    const records = computeRecords(matchType);
+    // Goals come from RFAF match events, so they only exist for league games.
+    if (!matchType || matchType === '11') {
+      const goals = await computeGoalsRecord();
+      if (goals) records.push(goals);
+    }
+    return { match_type: matchType ?? null, records };
   });
 
   app.get<{ Querystring: { metric?: string; limit?: string; match_type?: string } }>(
     '/api/stats/trends',
     async (req, reply) => {
-      const metric = req.query.metric as TrendMetric | undefined;
-      if (!metric || !TREND_METRICS.includes(metric)) {
+      const metric = req.query.metric as TrendMetric | 'goals' | undefined;
+      if (!metric || (metric !== 'goals' && !TREND_METRICS.includes(metric))) {
         reply.code(400);
-        return { error: 'Invalid metric', allowed: TREND_METRICS };
+        return { error: 'Invalid metric', allowed: [...TREND_METRICS, 'goals'] };
       }
       const limit = req.query.limit ? Number(req.query.limit) : 30;
       const matchType = parseMatchType(req.query.match_type);
+      if (metric === 'goals') {
+        // Goals come from RFAF match events, so they only exist for league games.
+        const points = matchType && matchType !== '11' ? [] : await computeGoalsTrend(limit);
+        return { metric, match_type: matchType ?? null, points };
+      }
       return {
         metric,
         match_type: matchType ?? null,
