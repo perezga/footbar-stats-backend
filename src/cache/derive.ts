@@ -26,20 +26,22 @@ export function invalidateDetailsCache(): void {
   detailsCache.clear();
 }
 
-function allDetails(userId: number, matchType?: string): SessionAPI[] {
-  const key = `${userId}:${matchType ?? 'all'}`;
+function allDetails(appUserId: number, matchType?: string): SessionAPI[] {
+  const key = `${appUserId}:${matchType ?? 'all'}`;
   const hit = detailsCache.get(key);
   if (hit) return hit;
   const rows = (
     matchType
       ? db
           .prepare(
-            'SELECT detail_data FROM sessions WHERE user_id = ? AND detail_data IS NOT NULL AND match_type = ?',
+            'SELECT detail_data FROM footbar_sessions WHERE app_user_id = ? AND detail_data IS NOT NULL AND match_type = ?',
           )
-          .all(userId, matchType)
+          .all(appUserId, matchType)
       : db
-          .prepare('SELECT detail_data FROM sessions WHERE user_id = ? AND detail_data IS NOT NULL')
-          .all(userId)
+          .prepare(
+            'SELECT detail_data FROM footbar_sessions WHERE app_user_id = ? AND detail_data IS NOT NULL',
+          )
+          .all(appUserId)
   ) as DetailRow[];
   // A corrupt row drops out of the pool instead of failing the whole request.
   const details = rows.flatMap((r) => tryParse<SessionAPI>(r.detail_data) ?? []);
@@ -58,8 +60,8 @@ const RECORD_METRICS: { key: keyof SessionAPI; label: string }[] = [
   { key: 'playing_time', label: 'Longest playing time' },
 ];
 
-export function computeRecords(userId: number, matchType?: string): RecordEntry[] {
-  const details = allDetails(userId, matchType);
+export function computeRecords(appUserId: number, matchType?: string): RecordEntry[] {
+  const details = allDetails(appUserId, matchType);
   if (details.length === 0) return [];
   const out: RecordEntry[] = [];
   for (const { key, label } of RECORD_METRICS) {
@@ -136,10 +138,12 @@ interface MatchGoals {
 }
 
 /** Footbar session id per Madrid calendar day (Game sessions only) for a user. */
-function sessionIdByDay(userId: number): Map<string, number> {
+function sessionIdByDay(appUserId: number): Map<string, number> {
   const rows = db
-    .prepare("SELECT id, start_date FROM sessions WHERE user_id = ? AND match_type = '11'")
-    .all(userId) as {
+    .prepare(
+      "SELECT id, start_date FROM footbar_sessions WHERE app_user_id = ? AND match_type = '11'",
+    )
+    .all(appUserId) as {
     id: number;
     start_date: string;
   }[];
@@ -156,8 +160,8 @@ function sessionIdByDay(userId: number): Map<string, number> {
  * the same-day Footbar session when one exists. Empty when RFAF is down so
  * stats endpoints degrade instead of failing.
  */
-async function playerMatchGoals(userId: number): Promise<MatchGoals[]> {
-  const playerId = getRfafPlayerId(userId);
+async function playerMatchGoals(appUserId: number): Promise<MatchGoals[]> {
+  const playerId = getRfafPlayerId(appUserId);
   if (!playerId) return [];
 
   let matches: Awaited<ReturnType<typeof getPlayerMatches>>['results'];
@@ -166,7 +170,7 @@ async function playerMatchGoals(userId: number): Promise<MatchGoals[]> {
   } catch {
     return [];
   }
-  const byDay = sessionIdByDay(userId);
+  const byDay = sessionIdByDay(appUserId);
   return matches
     .flatMap((m) => (m.date === null ? [] : [{ ...m, date: m.date }]))
     .sort((a, b) => a.date.localeCompare(b.date))
@@ -178,8 +182,8 @@ async function playerMatchGoals(userId: number): Promise<MatchGoals[]> {
     }));
 }
 
-export async function computeGoalsTrend(userId: number, limit = 30): Promise<TrendPoint[]> {
-  const matches = await playerMatchGoals(userId);
+export async function computeGoalsTrend(appUserId: number, limit = 30): Promise<TrendPoint[]> {
+  const matches = await playerMatchGoals(appUserId);
   return matches.slice(-limit).map((m) => ({
     session_id: m.session_id,
     start_date: m.date,
@@ -189,9 +193,9 @@ export async function computeGoalsTrend(userId: number, limit = 30): Promise<Tre
 }
 
 /** Most goals in one match for a user, or null with no goals yet / RFAF unavailable. */
-export async function computeGoalsRecord(userId: number): Promise<RecordEntry | null> {
+export async function computeGoalsRecord(appUserId: number): Promise<RecordEntry | null> {
   let best: MatchGoals | null = null;
-  for (const m of await playerMatchGoals(userId)) {
+  for (const m of await playerMatchGoals(appUserId)) {
     if (!best || m.goals > best.goals) best = m;
     // On a tie, prefer a match that can link to its Footbar session.
     else if (m.goals === best.goals && best.session_id === null && m.session_id !== null) best = m;
@@ -257,9 +261,9 @@ function levelOf(value: number, thresholds: readonly number[]): number {
 }
 
 /** Average goals per match over the window's RFAF-linked matches, or null. */
-async function goalsPerMatch(userId: number, sessionIds: number[]): Promise<number | null> {
+async function goalsPerMatch(appUserId: number, sessionIds: number[]): Promise<number | null> {
   const wanted = new Set(sessionIds);
-  const inWindow = (await playerMatchGoals(userId)).filter(
+  const inWindow = (await playerMatchGoals(appUserId)).filter(
     (m) => m.session_id !== null && wanted.has(m.session_id),
   );
   if (inWindow.length === 0) return null;
@@ -272,8 +276,8 @@ async function goalsPerMatch(userId: number, sessionIds: number[]): Promise<numb
  * via per-level thresholds; the overall level is the rounded mean. Criteria
  * without data (no RFAF goals, metric missing) simply drop out.
  */
-export async function computeLevel(userId: number): Promise<LevelResult> {
-  const pool = allDetails(userId)
+export async function computeLevel(appUserId: number): Promise<LevelResult> {
+  const pool = allDetails(appUserId)
     .filter((s) => s.match_type === '11' || s.match_type === 'ss')
     .sort((a, b) => b.start_date.localeCompare(a.start_date))
     .slice(0, LEVEL_WINDOW);
@@ -327,7 +331,7 @@ export async function computeLevel(userId: number): Promise<LevelResult> {
     'goals',
     'Goles por partido',
     await goalsPerMatch(
-      userId,
+      appUserId,
       pool.map((s) => s.id),
     ),
     [0.25, 0.5, 1, 1.5],
@@ -378,12 +382,12 @@ export interface MetricAverage {
  * is already cached enter the pool (details are fetched lazily on first open).
  */
 export function computeAverages(
-  userId: number,
+  appUserId: number,
   matchType?: string,
   excludeId?: number,
   window = 10,
 ): { count: number; averages: Partial<Record<AverageMetric, MetricAverage>> } {
-  const pool = allDetails(userId, matchType)
+  const pool = allDetails(appUserId, matchType)
     .filter((s) => s.id !== excludeId)
     .sort((a, b) => b.start_date.localeCompare(a.start_date))
     .slice(0, window);
@@ -404,12 +408,12 @@ export function computeAverages(
 }
 
 export function computeTrend(
-  userId: number,
+  appUserId: number,
   metric: TrendMetric,
   limit = 30,
   matchType?: string,
 ): TrendPoint[] {
-  const details = allDetails(userId, matchType)
+  const details = allDetails(appUserId, matchType)
     .filter((s) => typeof (s as unknown as Record<string, unknown>)[metric] === 'number')
     .sort((a, b) => a.start_date.localeCompare(b.start_date));
   const recent = details.slice(-limit);

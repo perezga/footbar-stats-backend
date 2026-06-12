@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
-import { getProfile } from '../cache/profile.js';
-import { setRfafPlayerId, getRfafPlayerId } from '../db.js';
 import { z } from 'zod';
+import { getProfile } from '../cache/profile.js';
+import { getRfafPlayerId, setRfafPlayerId } from '../db.js';
 
 const LinkRfafSchema = z.object({
   playerId: z.string().min(1),

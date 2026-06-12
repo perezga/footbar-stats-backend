@@ -5,7 +5,6 @@ import { refreshAll } from './cache/rfaf.js';
 import { ensureListFresh, getSessionDetail } from './cache/sessions.js';
 import { db, getRfafPlayerId, getSyncState, setSyncState } from './db.js';
 import { env } from './env.js';
-import { loadTokens } from './oauth/tokens.js';
 
 // Background daily sync: pulls Footbar and Universo RFAF data into SQLite so
 // the app serves fresh data without any user-triggered fetch. The last run is
@@ -18,44 +17,46 @@ const CHECK_EVERY_MS = 15 * 60 * 1000;
 /** How soon a failed run becomes due again. */
 const RETRY_MS = 60 * 60 * 1000;
 
-async function syncFootbarForUser(userId: number, log: FastifyBaseLogger): Promise<void> {
-  log.info(`scheduler: syncing Footbar for user ${userId}`);
-  await ensureListFresh(userId, true);
+async function syncFootbarForUser(appUserId: number, log: FastifyBaseLogger): Promise<void> {
+  log.info(`scheduler: syncing Footbar for user ${appUserId}`);
+  await ensureListFresh(appUserId, true);
   // The app fetches session details lazily; prefetch whatever is missing so
   // records/trends cover every session without anyone opening it first.
   const missing = db
-    .prepare('SELECT id FROM sessions WHERE user_id = ? AND detail_data IS NULL')
-    .all(userId) as {
+    .prepare('SELECT id FROM footbar_sessions WHERE app_user_id = ? AND detail_data IS NULL')
+    .all(appUserId) as {
     id: number;
   }[];
   for (const { id } of missing) {
     try {
-      await getSessionDetail(id, userId);
+      await getSessionDetail(id, appUserId);
     } catch (e) {
-      log.warn(e, `scheduler: session ${id} detail fetch failed for user ${userId}`);
+      log.warn(e, `scheduler: session ${id} detail fetch failed for user ${appUserId}`);
     }
   }
-  await getProfile(userId, true);
+  await getProfile(appUserId, true);
 }
 
 export async function runSync(log: FastifyBaseLogger): Promise<void> {
   log.info('scheduler: sync started');
   let ok = true;
 
-  const users = db.prepare('SELECT user_id FROM oauth_tokens').all() as { user_id: number }[];
+  const users = db.prepare('SELECT app_user_id FROM footbar_links').all() as {
+    app_user_id: number;
+  }[];
   const seenPlayers = new Set<string>();
 
-  for (const { user_id } of users) {
+  for (const { app_user_id } of users) {
     try {
-      await syncFootbarForUser(user_id, log);
-      const playerId = getRfafPlayerId(user_id);
+      await syncFootbarForUser(app_user_id, log);
+      const playerId = getRfafPlayerId(app_user_id);
       if (playerId) {
         await refreshAll(env.RFAF_SEASON, playerId);
         seenPlayers.add(playerId);
       }
     } catch (e) {
       ok = false;
-      log.error(e, `scheduler: sync failed for user ${user_id}`);
+      log.error(e, `scheduler: sync failed for user ${app_user_id}`);
     }
   }
 

@@ -5,7 +5,7 @@ export interface StoredTokens {
   access_token: string;
   refresh_token: string;
   expires_at: number;
-  user_id: number;
+  user_id: number; // This is the FOOTBAR user_id
   scope: string;
 }
 
@@ -19,47 +19,48 @@ interface TokenResponse {
   user?: { id: number };
 }
 
-export function loadTokens(userId?: number): StoredTokens | null {
-  if (userId === undefined) {
-    // If no specific user requested, return the first one (for backward compat/headless).
+export function loadTokens(appUserId?: number): StoredTokens | null {
+  if (appUserId === undefined) {
+    // Return the first one available if no user specified (headless/admin)
     const row = db
       .prepare(
-        'SELECT access_token, refresh_token, expires_at, user_id, scope FROM oauth_tokens LIMIT 1',
+        'SELECT access_token, refresh_token, expires_at, footbar_user_id as user_id, scope FROM footbar_links LIMIT 1',
       )
       .get() as StoredTokens | undefined;
     return row ?? null;
   }
   const row = db
     .prepare(
-      'SELECT access_token, refresh_token, expires_at, user_id, scope FROM oauth_tokens WHERE user_id = ?',
+      'SELECT access_token, refresh_token, expires_at, footbar_user_id as user_id, scope FROM footbar_links WHERE app_user_id = ?',
     )
-    .get(userId) as StoredTokens | undefined;
+    .get(appUserId) as StoredTokens | undefined;
   return row ?? null;
 }
 
-export function saveTokens(t: StoredTokens): void {
+export function saveTokens(t: StoredTokens, appUserId: number): void {
   db.prepare(
-    `INSERT INTO oauth_tokens (user_id, access_token, refresh_token, expires_at, scope)
-     VALUES (@user_id, @access_token, @refresh_token, @expires_at, @scope)
-     ON CONFLICT(user_id) DO UPDATE SET
+    `INSERT INTO footbar_links (app_user_id, footbar_user_id, access_token, refresh_token, expires_at, scope)
+     VALUES (?, @user_id, @access_token, @refresh_token, @expires_at, @scope)
+     ON CONFLICT(app_user_id) DO UPDATE SET
+       footbar_user_id = excluded.footbar_user_id,
        access_token = excluded.access_token,
        refresh_token = excluded.refresh_token,
        expires_at = excluded.expires_at,
        scope = excluded.scope`,
-  ).run(t);
+  ).run(appUserId, t);
 }
 
-export function clearTokens(userId: number): void {
-  db.prepare('DELETE FROM oauth_tokens WHERE user_id = ?').run(userId);
+export function clearTokens(appUserId: number): void {
+  db.prepare('DELETE FROM footbar_links WHERE app_user_id = ?').run(appUserId);
 }
 
-function tokenToStored(resp: TokenResponse, userId?: number): StoredTokens {
+function tokenToStored(resp: TokenResponse, footbarUserId?: number): StoredTokens {
   return {
     access_token: resp.access_token,
     refresh_token: resp.refresh_token,
     expires_at: Date.now() + resp.expires_in * 1000 - 60_000,
     // Password grants don't echo the user; keep the id from a previous login or the requested one.
-    user_id: resp.user?.id ?? userId ?? loadTokens()?.user_id ?? 0,
+    user_id: resp.user?.id ?? footbarUserId ?? 0,
     scope: resp.scope,
   };
 }
@@ -67,6 +68,7 @@ function tokenToStored(resp: TokenResponse, userId?: number): StoredTokens {
 export async function exchangeAuthCode(params: {
   code: string;
   code_verifier: string;
+  appUserId: number;
 }): Promise<StoredTokens> {
   const body = new URLSearchParams({
     client_id: env.FOOTBAR_CLIENT_ID,
@@ -91,13 +93,14 @@ export async function exchangeAuthCode(params: {
   }
   const json = (await res.json()) as TokenResponse;
   const stored = tokenToStored(json);
-  saveTokens(stored);
+  saveTokens(stored, params.appUserId);
   return stored;
 }
 
 export async function refreshAccessToken(
   refreshToken: string,
-  userId: number,
+  appUserId: number,
+  footbarUserId: number,
 ): Promise<StoredTokens> {
   const body = new URLSearchParams({
     client_id: env.FOOTBAR_CLIENT_ID,
@@ -118,14 +121,14 @@ export async function refreshAccessToken(
     throw new Error(`Refresh failed: ${res.status} ${text}`);
   }
   const json = (await res.json()) as TokenResponse;
-  const stored = tokenToStored(json, userId);
-  saveTokens(stored);
+  const stored = tokenToStored(json, footbarUserId);
+  saveTokens(stored, appUserId);
   return stored;
 }
 
 /**
  * Headless login with the configured Footbar account (OAuth password grant).
- * Lets the background sync authenticate without a browser OAuth round-trip.
+ * Does NOT link to an internal user automatically.
  */
 export async function loginWithPassword(): Promise<StoredTokens> {
   if (!env.FOOTBAR_USERNAME || !env.FOOTBAR_PASSWORD) {
@@ -153,27 +156,23 @@ export async function loginWithPassword(): Promise<StoredTokens> {
   }
   const json = (await res.json()) as TokenResponse;
   const stored = tokenToStored(json);
-  saveTokens(stored);
   return stored;
 }
 
-export async function getValidAccessToken(userId?: number): Promise<StoredTokens> {
-  const tokens = loadTokens(userId);
+export async function getValidAccessToken(appUserId?: number): Promise<StoredTokens> {
+  const tokens = loadTokens(appUserId);
   if (!tokens) {
-    // Only auto-login with password if we are looking for the primary user
-    // or if no user was specified.
-    if (userId === undefined || (env.FOOTBAR_USERNAME && tokens === null)) {
-      return loginWithPassword();
-    }
-    throw new Error(`No tokens found for user ${userId}`);
+    if (appUserId === undefined) return loginWithPassword();
+    throw new Error(`Footbar not linked for user ${appUserId}`);
   }
   if (Date.now() < tokens.expires_at) return tokens;
+
   try {
-    return await refreshAccessToken(tokens.refresh_token, tokens.user_id);
+    return await refreshAccessToken(tokens.refresh_token, appUserId!, tokens.user_id);
   } catch (e) {
-    // The refresh token can rot (rotation, revocation); re-login if we can.
-    if (env.FOOTBAR_USERNAME && tokens.user_id === loadTokens()?.user_id)
+    if (appUserId === undefined || loadTokens()?.user_id === tokens.user_id) {
       return loginWithPassword();
+    }
     throw e;
   }
 }

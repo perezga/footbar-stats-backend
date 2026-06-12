@@ -1,19 +1,32 @@
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 import { db } from '../db.js';
 import { env, FOOTBAR_BASE } from '../env.js';
 import { challengeFromVerifier, generateCodeVerifier, generateState } from '../oauth/pkce.js';
 import { clearTokens, exchangeAuthCode, getValidAccessToken, loadTokens } from '../oauth/tokens.js';
+import { hashPassword, verifyPassword } from '../util/password.js';
 
 const SESSION_COOKIE = 'sid';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const STATE_TTL_MS = 10 * 60 * 1000;
 
+const SignupSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+  nickname: z.string().optional(),
+});
+
+const LoginSchema = z.object({
+  email: z.string().email(),
+  password: z.string(),
+});
+
 function newSessionId(): string {
   return randomBytes(32).toString('base64url');
 }
 
-function setSessionCookie(reply: import('fastify').FastifyReply, sid: string): void {
+function setSessionCookie(reply: FastifyReply, sid: string): void {
   reply.setCookie(SESSION_COOKIE, sid, {
     httpOnly: true,
     sameSite: 'lax',
@@ -23,7 +36,8 @@ function setSessionCookie(reply: import('fastify').FastifyReply, sid: string): v
   });
 }
 
-export function currentUserId(req: import('fastify').FastifyRequest): number | null {
+/** Returns the internal app user_id or null. */
+export function currentUserId(req: FastifyRequest): number | null {
   const raw = req.cookies[SESSION_COOKIE];
   if (!raw) return null;
   const unsigned = req.unsignCookie(raw);
@@ -52,25 +66,75 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply): Pro
 }
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/auth/login', async (req, reply) => {
-    // Headless first: when the backend already holds valid Footbar tokens (or
-    // can mint them with FOOTBAR_USERNAME/PASSWORD), the app session can be
-    // created directly — no Footbar OAuth page in the browser.
+  // --- Internal Identity Auth ---
+
+  app.post('/auth/signup', async (req, reply) => {
+    const parsed = SignupSchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'Invalid signup data', details: parsed.error.format() };
+    }
+    const { email, password, nickname } = parsed.data;
+    const password_hash = hashPassword(password);
+
     try {
-      const tokens = await getValidAccessToken();
-      if (tokens.user_id) {
-        const sid = newSessionId();
-        db.prepare('INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)').run(
-          sid,
-          tokens.user_id,
-          Date.now(),
-        );
-        setSessionCookie(reply, sid);
-        reply.redirect(env.FRONTEND_ORIGIN + '/');
-        return;
+      const res = db
+        .prepare(
+          'INSERT INTO users (email, password_hash, nickname, created_at) VALUES (?, ?, ?, ?)',
+        )
+        .run(email, password_hash, nickname ?? null, Date.now());
+
+      const appUserId = res.lastInsertRowid as number;
+      const sid = newSessionId();
+      db.prepare('INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)').run(
+        sid,
+        appUserId,
+        Date.now(),
+      );
+      setSessionCookie(reply, sid);
+      return { ok: true, user_id: appUserId };
+    } catch (e: any) {
+      if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        reply.code(409);
+        return { error: 'Email already exists' };
       }
-    } catch (e) {
-      req.log.warn(e, 'headless login unavailable, falling back to browser OAuth');
+      throw e;
+    }
+  });
+
+  app.post('/auth/login', async (req, reply) => {
+    const parsed = LoginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'Invalid login data' };
+    }
+    const { email, password } = parsed.data;
+    const user = db.prepare('SELECT id, password_hash FROM users WHERE email = ?').get(email) as
+      | { id: number; password_hash: string }
+      | undefined;
+
+    if (!user || !verifyPassword(password, user.password_hash)) {
+      reply.code(401);
+      return { error: 'Invalid email or password' };
+    }
+
+    const sid = newSessionId();
+    db.prepare('INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)').run(
+      sid,
+      user.id,
+      Date.now(),
+    );
+    setSessionCookie(reply, sid);
+    return { ok: true, user_id: user.id };
+  });
+
+  // --- Footbar Linking (OAuth) ---
+
+  app.get('/auth/footbar/link', async (req, reply) => {
+    const appUserId = currentUserId(req);
+    if (!appUserId) {
+      reply.code(401);
+      return { error: 'Log in to the app before linking Footbar' };
     }
 
     const verifier = generateCodeVerifier();
@@ -120,16 +184,21 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         return;
       }
 
+      // Check if we have an active app session to link to.
+      const appUserId = currentUserId(req);
+      if (!appUserId) {
+        // Alternative: Auto-create an internal user from Footbar ID (Login with Footbar)
+        // For now, require internal login first for simplicity as per design.
+        reply
+          .code(401)
+          .type('text/plain')
+          .send('No active app session found. Please log in to Footbar Stats first.');
+        return;
+      }
+
       try {
-        const tokens = await exchangeAuthCode({ code, code_verifier: row.code_verifier });
-        const sid = newSessionId();
-        db.prepare('INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)').run(
-          sid,
-          tokens.user_id,
-          Date.now(),
-        );
-        setSessionCookie(reply, sid);
-        reply.redirect(env.FRONTEND_ORIGIN + '/');
+        await exchangeAuthCode({ code, code_verifier: row.code_verifier, appUserId });
+        reply.redirect(`${env.FRONTEND_ORIGIN}/profile`);
       } catch (e) {
         req.log.error(e);
         reply.code(500).type('text/plain').send('Token exchange failed');
@@ -137,13 +206,34 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  app.get('/auth/status', async (req, reply) => {
-    const userId = currentUserId(req);
-    const tokens = userId !== null ? loadTokens(userId) : null;
+  app.get('/auth/status', async (req, _reply) => {
+    const appUserId = currentUserId(req);
+    const user = appUserId
+      ? (db.prepare('SELECT email, nickname FROM users WHERE id = ?').get(appUserId) as
+          | { email: string; nickname: string | null }
+          | undefined)
+      : null;
+
+    const footbarLink = appUserId
+      ? db.prepare('SELECT footbar_user_id FROM footbar_links WHERE app_user_id = ?').get(appUserId)
+      : null;
+    const rfafLink = appUserId
+      ? db.prepare('SELECT rfaf_player_id FROM rfaf_links WHERE app_user_id = ?').get(appUserId)
+      : null;
 
     return {
-      authenticated: userId !== null && tokens !== null && tokens.user_id === userId,
-      user_id: userId,
+      authenticated: appUserId !== null && user !== undefined,
+      user: user
+        ? {
+            id: appUserId,
+            email: user.email,
+            nickname: user.nickname,
+          }
+        : null,
+      links: {
+        footbar: !!footbarLink,
+        rfaf: !!rfafLink,
+      },
     };
   });
 
@@ -152,16 +242,20 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     if (raw) {
       const unsigned = req.unsignCookie(raw);
       if (unsigned.valid && unsigned.value) {
-        const row = db
-          .prepare('SELECT user_id FROM app_sessions WHERE sid = ?')
-          .get(unsigned.value) as { user_id: number } | undefined;
-        if (row) {
-          clearTokens(row.user_id);
-          db.prepare('DELETE FROM app_sessions WHERE sid = ?').run(unsigned.value);
-        }
+        db.prepare('DELETE FROM app_sessions WHERE sid = ?').run(unsigned.value);
       }
     }
     reply.clearCookie(SESSION_COOKIE, { path: '/' });
+    return { ok: true };
+  });
+
+  app.post('/auth/footbar/unlink', async (req, reply) => {
+    const appUserId = currentUserId(req);
+    if (appUserId) {
+      clearTokens(appUserId);
+      db.prepare('DELETE FROM footbar_profiles WHERE app_user_id = ?').run(appUserId);
+      db.prepare('DELETE FROM footbar_sessions WHERE app_user_id = ?').run(appUserId);
+    }
     return { ok: true };
   });
 }
