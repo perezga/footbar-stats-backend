@@ -1,6 +1,6 @@
 export type RfafResource = 'standings' | 'scorers' | 'fixtures' | 'player_stats';
 
-/** One selectable season ('21' = 2025-2026). */
+/** One selectable season ('22' = 2026-2027). */
 export interface Season {
   id: string;
   name: string;
@@ -61,7 +61,7 @@ export interface PlayerStats {
   dorsal: number | null;
   age: number | null;
   category: string;
-  /** Universo RFAF season id (e.g. '21'). */
+  /** Universo RFAF season id (e.g. '22'). */
   season_id: string;
   /** Season label (e.g. '2025-2026'). */
   season: string;

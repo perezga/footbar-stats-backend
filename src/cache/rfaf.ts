@@ -153,7 +153,7 @@ export async function getPlayerStats(
 }
 
 /**
- * The played-matches endpoint wants the season label ('2025-2026'), not the
+ * The played-matches endpoint wants the season label ('2026-2027'), not the
  * id; resolve it from the seasons list in the cached general stats.
  */
 async function seasonName(seasonId: string): Promise<string | null> {

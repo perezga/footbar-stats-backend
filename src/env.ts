@@ -36,8 +36,8 @@ const Env = z.object({
   RFAF_CODEQUIPO: z.coerce.number().int().positive().default(817922),
   /** Universo RFAF player id for the tracked player's stats page. */
   RFAF_CODPLAYER: z.string().default('35133353'),
-  /** Universo RFAF season id (21 = 2025/26). */
-  RFAF_SEASON: z.string().default('21'),
+  /** Universo RFAF season id (22 = 2026/27). */
+  RFAF_SEASON: z.string().default('22'),
   /** Substring used to flag the tracked player in the scorers table. */
   RFAF_OWN_PLAYER: z.string().default('PEREZ GARCIA, ERIK'),
   /** Team name used to decide which side of a fixture is ours. */
