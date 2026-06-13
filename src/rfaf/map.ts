@@ -3,6 +3,7 @@ import type {
   PlayerMatch,
   PlayerMatchEvent,
   PlayerStats,
+  RfafSearchResult,
   Scorer,
   Season,
   SeasonContext,

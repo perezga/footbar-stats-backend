@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import {
+  computeAdvancedMetrics,
   computeAverages,
   computeGoalsRecord,
   computeGoalsTrend,
@@ -107,4 +108,11 @@ export async function statsRoutes(app: FastifyInstance): Promise<void> {
       return { match_type: matchType ?? null, window, ...result };
     },
   );
+
+  app.get('/api/stats/advanced', async (req, reply) => {
+    if (!req.playerId) {
+      return reply.status(400).send({ error: 'Player context required' });
+    }
+    return computeAdvancedMetrics(req.playerId, req.userId ?? 0);
+  });
 }

@@ -423,6 +423,217 @@ export async function computeLevel(playerId: number, footbarUserId: number): Pro
     reasons,
   };
 }
+export interface AdvancedMetrics {
+  // RFAF-only
+  goal_contribution_pct: number | null;
+  clutch_factor_pct: number | null;
+  discipline_rating: number | null;
+  consistency_index: number | null;
+  ppg_impact: number | null;
+  scorer_percentile: number | null;
+  // Combined
+  shot_conversion_pct: number | null;
+  distance_per_goal_km: number | null;
+  workload_win_vs_loss_ratio: number | null;
+  possession_win_ratio: number | null;
+  fatigue_resistance_pct: number | null;
+  workrate_win_pct: number | null;
+  luka_modric_score: number | null;
+  intensity_vs_rank_ratio: number | null;
+}
+
+export async function computeAdvancedMetrics(
+  playerId: number,
+  footbarUserId: number,
+): Promise<AdvancedMetrics> {
+  const [rfafStats, rfafMatches, rfafStandings, rfafScorers, rfafFixtures] = await Promise.all([
+    import('./rfaf.js').then((m) => m.getPlayerStats(playerId)),
+    getPlayerMatches(playerId),
+    import('./rfaf.js').then((m) => m.getStandings(playerId)),
+    import('./rfaf.js').then((m) => m.getScorers(playerId)),
+    import('./rfaf.js').then((m) => m.getFixtures(playerId)),
+  ]);
+
+  const footbarPool = allDetails(footbarUserId, '11');
+
+  // 1. Goal Contribution %
+  let goalContribution = null;
+  const ownGoals = rfafStats.results.stats.find((s) => s.name === 'Total Goles')?.value ?? 0;
+  const ownTeam = rfafStandings.results.find((s) => s.own);
+  if (ownTeam && ownTeam.goals_for > 0) {
+    goalContribution = (ownGoals / ownTeam.goals_for) * 100;
+  }
+
+  // 2. Clutch Factor % (Goals in last 15 min / Total Goals)
+  let clutchFactor = null;
+  if (ownGoals > 0) {
+    const clutchGoals = rfafMatches.results.reduce(
+      (sum, m) => sum + m.events.filter((e) => e.kind === 'goal' && (e.minute ?? 0) >= 75).length,
+      0,
+    );
+    clutchFactor = (clutchGoals / ownGoals) * 100;
+  }
+
+  // 3. Discipline Rating (Minutes per card)
+  let disciplineRating = null;
+  const totalCards = rfafStats.results.cards.reduce((sum, c) => sum + c.value, 0);
+  if (rfafStats.results.minutes_played && totalCards > 0) {
+    disciplineRating = rfafStats.results.minutes_played / totalCards;
+  }
+
+  // 4. Consistency Index (Max consecutive matches as Titular)
+  let consistencyIndex = 0;
+  let currentStreak = 0;
+  for (const m of rfafMatches.results) {
+    if (m.started) {
+      currentStreak++;
+      consistencyIndex = Math.max(consistencyIndex, currentStreak);
+    } else {
+      currentStreak = 0;
+    }
+  }
+
+  // 5. Points-per-Game (Impact)
+  let ppgImpact = null;
+  const playedDates = new Set(rfafMatches.results.map((m) => m.date));
+  const playedPoints = rfafFixtures.results
+    .filter((f) => playedDates.has(f.date) && f.result)
+    .map((f) => (f.result === 'W' ? 3 : f.result === 'D' ? 1 : 0));
+  const missedPoints = rfafFixtures.results
+    .filter((f) => !playedDates.has(f.date) && f.result)
+    .map((f) => (f.result === 'W' ? 3 : f.result === 'D' ? 1 : 0));
+
+  if (playedPoints.length > 0 && missedPoints.length > 0) {
+    const ppgPlayed = playedPoints.reduce((a: number, b) => a + b, 0) / playedPoints.length;
+    const ppgMissed = missedPoints.reduce((a: number, b) => a + b, 0) / missedPoints.length;
+    ppgImpact = ppgPlayed - ppgMissed;
+  }
+
+  // 6. Scorer Percentile
+  let scorerPercentile = null;
+  const myScorer = rfafScorers.results.find((s) => s.own);
+  if (myScorer && rfafScorers.results.length > 0) {
+    scorerPercentile = (1 - (myScorer.rank - 1) / rfafScorers.results.length) * 100;
+  }
+
+  // --- Combined ---
+
+  const ownTeamName = rfafStats.results.team;
+  const matchResults = new Map(rfafFixtures.results.map((f) => [f.date, f.result]));
+
+  // 7. Shot Conversion %
+  let shotConversion = null;
+  const totalShots = footbarPool.reduce((sum, s) => sum + (s.shot_count ?? 0), 0);
+  if (totalShots > 0 && ownGoals > 0) {
+    shotConversion = (ownGoals / totalShots) * 100;
+  }
+
+  // 8. Distance per Goal
+  let distancePerGoal = null;
+  const totalDistance = footbarPool.reduce((sum, s) => sum + (s.distance ?? 0), 0);
+  if (ownGoals > 0) {
+    distancePerGoal = totalDistance / 1000 / ownGoals;
+  }
+
+  // 9. Workload Win vs Loss Ratio
+  let workloadRatio = null;
+  const wins = footbarPool.filter((s) => matchResults.get(madridDateKey(s.start_date) ?? '') === 'W');
+  const losses = footbarPool.filter((s) => matchResults.get(madridDateKey(s.start_date) ?? '') === 'L');
+
+  if (wins.length > 0 && losses.length > 0) {
+    const avgWinDist = wins.reduce((sum, s) => sum + (s.distance ?? 0), 0) / wins.length;
+    const avgLossDist = losses.reduce((sum, s) => sum + (s.distance ?? 0), 0) / losses.length;
+    workloadRatio = avgWinDist / avgLossDist;
+  }
+
+  // 10. Possession Win Ratio
+  let possessionRatio = null;
+  if (wins.length > 0 && losses.length > 0) {
+    const avgWinBall = wins.reduce((sum, s) => sum + (s.time_with_ball ?? 0), 0) / wins.length;
+    const avgLossBall = losses.reduce((sum, s) => sum + (s.time_with_ball ?? 0), 0) / losses.length;
+    if (avgLossBall > 0) possessionRatio = avgWinBall / avgLossBall;
+  }
+
+  // 11. Fatigue Resistance % (using distance_5min bins)
+  let fatigueResistance = null;
+  const sessionResistances = footbarPool
+    .map((s) => {
+      if (!s.distance_5min || s.distance_5min.length < 4) return null;
+      const mid = Math.floor(s.distance_5min.length / 2);
+      const firstHalf = s.distance_5min.slice(0, mid);
+      const secondHalf = s.distance_5min.slice(mid);
+      const dist1 = firstHalf.reduce((sum, b) => sum + b.low + b.normal + b.high, 0);
+      const dist2 = secondHalf.reduce((sum, b) => sum + b.low + b.normal + b.high, 0);
+      return dist1 > 0 ? (dist2 / dist1) * 100 : null;
+    })
+    .filter((v): v is number => v !== null);
+
+  if (sessionResistances.length > 0) {
+    fatigueResistance = sessionResistances.reduce((a, b) => a + b, 0) / sessionResistances.length;
+  }
+
+  // 12. Workrate Win % (Win % when distance > avg)
+  let workrateWinPct = null;
+  if (footbarPool.length > 0) {
+    const avgSeasonDist = totalDistance / footbarPool.length;
+    const highWorkrateMatches = footbarPool.filter((s) => (s.distance ?? 0) > avgSeasonDist);
+    if (highWorkrateMatches.length > 0) {
+      const highWorkrateWins = highWorkrateMatches.filter(
+        (s) => matchResults.get(madridDateKey(s.start_date) ?? '') === 'W',
+      );
+      workrateWinPct = (highWorkrateWins.length / highWorkrateMatches.length) * 100;
+    }
+  }
+
+  // 13. Luka Modric Score (Composite)
+  let modricScore = null;
+  if (footbarPool.length > 0) {
+    const avgPasses = footbarPool.reduce((sum, s) => sum + (s.pass_count ?? 0), 0) / footbarPool.length;
+    const avgDist = totalDistance / 1000 / footbarPool.length;
+    const goalsPerGame = ownGoals / (rfafMatches.results.length || 1);
+    modricScore = Math.max(0, avgPasses / 5 + avgDist - goalsPerGame * 5);
+  }
+
+  // 14. Intensity vs Rank Ratio (Intensity against Top 5 vs Bottom teams)
+  let intensityVsRank = null;
+  const rankMap = new Map(rfafStandings.results.map((s) => [norm(s.team), s.position]));
+  const rankData = footbarPool
+    .map((s) => {
+      const date = madridDateKey(s.start_date);
+      const rfafM = date ? rfafMatches.results.find((m) => m.date === date) : undefined;
+      const oppName = rfafM ? (norm(rfafM.home).includes(norm(ownTeamName)) ? rfafM.away : rfafM.home) : '';
+      const oppRank = rankMap.get(norm(oppName));
+      return oppRank ? { intensity: s.hsr_plus ?? 0, rank: oppRank } : null;
+    })
+    .filter((v): v is { intensity: number; rank: number } => v !== null);
+
+  if (rankData.length >= 2) {
+    const topIntensity = rankData.filter(d => d.rank <= 5).reduce((a, b) => a + b.intensity, 0) / (rankData.filter(d => d.rank <= 5).length || 1);
+    const bottomIntensity = rankData.filter(d => d.rank > 10).reduce((a, b) => a + b.intensity, 0) / (rankData.filter(d => d.rank > 10).length || 1);
+    if (bottomIntensity > 0) intensityVsRank = topIntensity / bottomIntensity;
+  }
+
+  return {
+    goal_contribution_pct: goalContribution,
+    clutch_factor_pct: clutchFactor,
+    discipline_rating: disciplineRating,
+    consistency_index: consistencyIndex || null,
+    ppg_impact: ppgImpact,
+    scorer_percentile: scorerPercentile,
+    shot_conversion_pct: shotConversion,
+    distance_per_goal_km: distancePerGoal,
+    workload_win_vs_loss_ratio: workloadRatio,
+    possession_win_ratio: possessionRatio,
+    fatigue_resistance_pct: fatigueResistance,
+    workrate_win_pct: workrateWinPct,
+    luka_modric_score: modricScore,
+    intensity_vs_rank_ratio: intensityVsRank,
+  };
+}
+
+export function norm(s: string): string {
+  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
 
 /** Metrics averaged for the session-vs-average comparison (the detail tiles). */
 export const AVERAGE_METRICS = [
