@@ -1,5 +1,13 @@
 export type RfafResource = 'standings' | 'scorers' | 'fixtures' | 'player_stats';
 
+export interface RfafSearchResult {
+  id: string;
+  name: string;
+  team: string;
+  category: string;
+  image: string | null;
+}
+
 /** One selectable season ('22' = 2026-2027). */
 export interface Season {
   id: string;

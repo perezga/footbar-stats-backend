@@ -29,19 +29,6 @@ const Env = z.object({
   // Universo RFAF (www.universorfaf.es) account used to fetch league data.
   RFAF_USERNAME: z.string().min(1, 'RFAF_USERNAME is required'),
   RFAF_PASSWORD: z.string().min(1, 'RFAF_PASSWORD is required'),
-
-  // RFAF league/competition identifiers (defaults track ATLÉTICO ESTACIÓN "A").
-  RFAF_CODCOMPETICION: z.string().default('44788581'),
-  RFAF_CODGRUPO: z.string().default('46734797'),
-  RFAF_CODEQUIPO: z.coerce.number().int().positive().default(817922),
-  /** Universo RFAF player id for the tracked player's stats page. */
-  RFAF_CODPLAYER: z.string().default('35133353'),
-  /** Universo RFAF season id (22 = 2026/27). */
-  RFAF_SEASON: z.string().default('22'),
-  /** Substring used to flag the tracked player in the scorers table. */
-  RFAF_OWN_PLAYER: z.string().default('PEREZ GARCIA, ERIK'),
-  /** Team name used to decide which side of a fixture is ours. */
-  RFAF_OWN_TEAM: z.string().default('ATLETICO ESTACION'),
 });
 
 const parsed = Env.safeParse(process.env);

@@ -8,8 +8,9 @@ import Fastify from 'fastify';
 import { env } from './env.js';
 import './db.js';
 import { authRoutes, requireAuth } from './routes/auth.js';
+import { playerRoutes } from './routes/players.js';
 import { profileRoutes } from './routes/profile.js';
-import { rfafRoutes } from './routes/rfaf.js';
+import { publicRfafRoutes, rfafRoutes } from './routes/rfaf.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { statsRoutes } from './routes/stats.js';
 import { startScheduler } from './scheduler.js';
@@ -33,6 +34,9 @@ if (!httpsOpts && env.REDIRECT_URI.startsWith('https://')) {
 
 const app = Fastify({ logger: true, ...(httpsOpts ? { https: httpsOpts } : {}) });
 
+app.decorateRequest('userId', null);
+app.decorateRequest('playerId', null);
+
 await app.register(cors, {
   origin: env.FRONTEND_ORIGIN,
   credentials: true,
@@ -45,11 +49,12 @@ await app.register(cookie, {
 });
 
 await app.register(authRoutes);
+await app.register(playerRoutes);
+await app.register(publicRfafRoutes);
 
 // Everything under this plugin requires a signed session cookie; auth routes
 // and /health stay public above/below.
 await app.register(async (api) => {
-  api.decorateRequest('userId', null);
   api.addHook('onRequest', requireAuth);
   await api.register(profileRoutes);
   await api.register(sessionRoutes);

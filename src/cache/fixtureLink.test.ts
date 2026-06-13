@@ -121,6 +121,7 @@ describe('enrichSession', () => {
     const out = enrichSession(
       { start_date: '2026-01-10T16:00:00Z', match_type: '11', title: 'Sesión' },
       index,
+      'ATLETICO ESTACION',
     );
     expect(out.title).toBe('ATLETICO ESTACION "A" vs CF RIVAL');
     expect(out.fixture?.opponent).toBe('CF RIVAL');
@@ -131,11 +132,11 @@ describe('enrichSession', () => {
 
   it('leaves non-match sessions untouched', () => {
     const session = { start_date: '2026-01-10T16:00:00Z', match_type: 'tr', title: 'Training' };
-    expect(enrichSession(session, index)).toEqual(session);
+    expect(enrichSession(session, index, 'ATLETICO ESTACION')).toEqual(session);
   });
 
   it('leaves matches with no same-day fixture untouched', () => {
     const session = { start_date: '2026-03-01T16:00:00Z', match_type: '11', title: 'Sesión' };
-    expect(enrichSession(session, index)).toEqual(session);
+    expect(enrichSession(session, index, 'ATLETICO ESTACION')).toEqual(session);
   });
 });

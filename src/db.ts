@@ -13,23 +13,38 @@ db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS players (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    footbar_user_id INTEGER UNIQUE,
+    rfaf_player_id TEXT UNIQUE,
+    rfaf_season TEXT,
+    rfaf_team_id INTEGER,
+    rfaf_group_id TEXT,
+    rfaf_competition_id TEXT,
+    rfaf_own_player TEXT,
+    rfaf_own_team TEXT,
+    created_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS oauth_tokens (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
+    player_id INTEGER PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
     access_token TEXT NOT NULL,
     refresh_token TEXT NOT NULL,
     expires_at INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
+    footbar_user_id INTEGER NOT NULL,
     scope TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS profile (
-    user_id INTEGER PRIMARY KEY,
+    footbar_user_id INTEGER PRIMARY KEY,
     data TEXT NOT NULL,
     fetched_at INTEGER NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY,
+    footbar_user_id INTEGER NOT NULL,
     start_date TEXT NOT NULL,
     match_type TEXT NOT NULL,
     position TEXT,
@@ -37,6 +52,7 @@ db.exec(`
     detail_data TEXT,
     detail_fetched_at INTEGER
   );
+  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(footbar_user_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(start_date DESC);
   CREATE INDEX IF NOT EXISTS idx_sessions_match_type ON sessions(match_type);
 

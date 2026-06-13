@@ -38,26 +38,71 @@ declare module 'fastify' {
   interface FastifyRequest {
     /** Set by requireAuth; non-null in every route registered behind it. */
     userId: number | null;
+    playerId: number | null;
   }
 }
 
 /** onRequest hook for the protected /api scope: 401s anonymous requests. */
 export async function requireAuth(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const userId = currentUserId(req);
-  if (userId === null) {
+  const playerIdHeader = req.headers['x-player-id'];
+  if (playerIdHeader) {
+    req.playerId = Number(playerIdHeader);
+  }
+
+  const userIdFromCookie = currentUserId(req);
+
+  if (req.playerId) {
+    const player = db
+      .prepare('SELECT footbar_user_id FROM players WHERE id = ?')
+      .get(req.playerId) as { footbar_user_id: number | null } | undefined;
+
+    if (!player) {
+      await reply.code(404).send({ error: 'Player not found' });
+      return;
+    }
+
+    if (player.footbar_user_id) {
+      // Player is linked to Footbar. Ensure the session cookie matches this user.
+      if (userIdFromCookie !== null && userIdFromCookie !== player.footbar_user_id) {
+        await reply.code(401).send({
+          error: 'Session mismatch. The current session belongs to a different Footbar account.',
+        });
+        return;
+      }
+      // If we have no cookie but the player is linked, we still set req.userId
+      // from the DB so that headless sync/loading can work if needed, though
+      // routes usually still require a valid browser session for interactive use.
+      req.userId = player.footbar_user_id;
+    } else {
+      // Player is NOT linked to Footbar (RFAF-only).
+      // Crucially, we MUST NOT use the userId from any lingering cookie.
+      req.userId = null;
+    }
+  } else {
+    // No playerId provided. This shouldn't happen much with the current UI.
+    req.userId = userIdFromCookie;
+  }
+
+  if (req.userId === null && !req.playerId) {
     await reply.code(401).send({ error: 'Not authenticated' });
     return;
   }
-  req.userId = userId;
 }
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/auth/login', async (req, reply) => {
-    // Headless first: when the backend already holds valid Footbar tokens (or
-    // can mint them with FOOTBAR_USERNAME/PASSWORD), the app session can be
-    // created directly — no Footbar OAuth page in the browser.
+  app.get<{ Querystring: { playerId?: string } }>('/auth/login', async (req, reply) => {
+    const playerId = Number(req.query.playerId);
+    if (Number.isNaN(playerId)) {
+      return reply.status(400).send({ error: 'playerId query parameter is required' });
+    }
+
+    // Verify player exists
+    const player = db.prepare('SELECT id FROM players WHERE id = ?').get(playerId);
+    if (!player) return reply.status(404).send({ error: 'Player not found' });
+
+    // Headless first
     try {
-      const tokens = await getValidAccessToken();
+      const tokens = await getValidAccessToken(playerId);
       if (tokens.user_id) {
         const sid = newSessionId();
         db.prepare('INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)').run(
@@ -66,16 +111,20 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
           Date.now(),
         );
         setSessionCookie(reply, sid);
-        reply.redirect(env.FRONTEND_ORIGIN + '/');
+        reply.redirect(`${env.FRONTEND_ORIGIN}/`);
         return;
       }
     } catch (e) {
-      req.log.warn(e, 'headless login unavailable, falling back to browser OAuth');
+      req.log.warn(
+        e,
+        `headless login unavailable for player ${playerId}, falling back to browser OAuth`,
+      );
     }
 
     const verifier = generateCodeVerifier();
     const challenge = challengeFromVerifier(verifier);
-    const state = generateState();
+    // Include playerId in the state so we know which player to link in the callback
+    const state = `${generateState()}:${playerId}`;
     db.prepare('INSERT INTO oauth_state (state, code_verifier, created_at) VALUES (?, ?, ?)').run(
       state,
       verifier,
@@ -107,6 +156,13 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         reply.code(400).type('text/plain').send('Missing code or state');
         return;
       }
+
+      const playerId = Number(state.split(':')[1]);
+      if (Number.isNaN(playerId)) {
+        reply.code(400).type('text/plain').send('Invalid state: missing playerId');
+        return;
+      }
+
       const row = db
         .prepare('SELECT code_verifier, created_at FROM oauth_state WHERE state = ?')
         .get(state) as { code_verifier: string; created_at: number } | undefined;
@@ -121,7 +177,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       }
 
       try {
-        const tokens = await exchangeAuthCode({ code, code_verifier: row.code_verifier });
+        const tokens = await exchangeAuthCode({ code, code_verifier: row.code_verifier, playerId });
         const sid = newSessionId();
         db.prepare('INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)').run(
           sid,
@@ -129,7 +185,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
           Date.now(),
         );
         setSessionCookie(reply, sid);
-        reply.redirect(env.FRONTEND_ORIGIN + '/');
+        reply.redirect(`${env.FRONTEND_ORIGIN}/`);
       } catch (e) {
         req.log.error(e);
         reply.code(500).type('text/plain').send('Token exchange failed');
@@ -137,36 +193,26 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  app.get('/auth/status', async (req, reply) => {
-    let userId = currentUserId(req);
-    let tokens = loadTokens();
-    if (userId === null || tokens === null || tokens.user_id !== userId) {
-      // Auto-provision the browser session: the scheduler keeps server-side
-      // Footbar tokens alive, so a visitor with no (or a stale) cookie can be
-      // signed in on this very response — the login page never shows.
-      try {
-        tokens = await getValidAccessToken();
-        if (tokens.user_id) {
-          const sid = newSessionId();
-          db.prepare('INSERT INTO app_sessions (sid, user_id, created_at) VALUES (?, ?, ?)').run(
-            sid,
-            tokens.user_id,
-            Date.now(),
-          );
-          setSessionCookie(reply, sid);
-          userId = tokens.user_id;
-        }
-      } catch (e) {
-        req.log.warn(e, 'auto-login unavailable, manual login required');
-      }
+  app.get('/auth/status', async (req, _reply) => {
+    // If playerId is provided (via x-player-id header), check that player specifically.
+    if (req.playerId) {
+      const tokens = loadTokens(req.playerId);
+      return {
+        authenticated: tokens !== null,
+        user_id: tokens?.user_id ?? null,
+        player_id: req.playerId,
+      };
     }
+
+    const userId = currentUserId(req);
     return {
-      authenticated: userId !== null && tokens !== null && tokens.user_id === userId,
+      authenticated: userId !== null,
       user_id: userId,
     };
   });
 
-  app.post('/auth/logout', async (req, reply) => {
+
+  app.post<{ Body: { playerId?: number } }>('/auth/logout', async (req, reply) => {
     const raw = req.cookies[SESSION_COOKIE];
     if (raw) {
       const unsigned = req.unsignCookie(raw);
@@ -174,7 +220,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         db.prepare('DELETE FROM app_sessions WHERE sid = ?').run(unsigned.value);
       }
     }
-    clearTokens();
+    const playerId = req.body.playerId;
+    if (playerId) {
+      clearTokens(playerId);
+    }
     reply.clearCookie(SESSION_COOKIE, { path: '/' });
     return { ok: true };
   });

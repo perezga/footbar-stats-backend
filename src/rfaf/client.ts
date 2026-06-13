@@ -125,3 +125,11 @@ export function fetchPlayerMatchsMinutes(playerId: string, season: string): Prom
     season,
   });
 }
+
+/** Search for players by name. */
+export function searchPlayers(query: string): Promise<unknown> {
+  return apiPost('internal-data/search', {
+    type: '3', // '3' is the internal RFAF code for players
+    search: query,
+  });
+}

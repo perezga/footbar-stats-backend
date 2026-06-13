@@ -8,21 +8,23 @@ const LIST_TTL_MS = 60 * 60 * 1000;
 const LAST_SYNC_KEY = 'last_list_sync';
 
 const upsertList = db.prepare(
-  `INSERT INTO sessions (id, start_date, match_type, position, list_data)
-   VALUES (@id, @start_date, @match_type, @position, @list_data)
+  `INSERT INTO sessions (id, footbar_user_id, start_date, match_type, position, list_data)
+   VALUES (@id, @footbar_user_id, @start_date, @match_type, @position, @list_data)
    ON CONFLICT(id) DO UPDATE SET
+     footbar_user_id = excluded.footbar_user_id,
      start_date = excluded.start_date,
      match_type = excluded.match_type,
      position = excluded.position,
      list_data = excluded.list_data`,
 );
 
-async function syncList(): Promise<void> {
-  const page = await fetchSessionList();
+async function syncList(playerId: number, footbarUserId: number): Promise<void> {
+  const page = await fetchSessionList(playerId);
   const writeAll = db.transaction((items: SessionListAPI[]) => {
     for (const s of items) {
       upsertList.run({
         id: s.id,
+        footbar_user_id: footbarUserId,
         start_date: s.start_date,
         match_type: s.match_type,
         position: s.position ?? null,
@@ -32,16 +34,21 @@ async function syncList(): Promise<void> {
   });
   writeAll(page.results);
   invalidateDetailsCache();
-  setSyncState(LAST_SYNC_KEY, Date.now().toString());
+  setSyncState(`${LAST_SYNC_KEY}:${footbarUserId}`, Date.now().toString());
 }
 
-export async function ensureListFresh(force = false): Promise<void> {
-  const last = Number(getSyncState(LAST_SYNC_KEY) ?? 0);
+export async function ensureListFresh(
+  playerId: number,
+  footbarUserId: number,
+  force = false,
+): Promise<void> {
+  const last = Number(getSyncState(`${LAST_SYNC_KEY}:${footbarUserId}`) ?? 0);
   if (!force && Date.now() - last < LIST_TTL_MS) return;
-  await syncList();
+  await syncList(playerId, footbarUserId);
 }
 
 export interface SessionListFilters {
+  footbarUserId: number;
   matchType?: MatchType;
   from?: string;
   to?: string;
@@ -56,8 +63,8 @@ export interface SessionListResult {
 }
 
 export function listSessions(filters: SessionListFilters): SessionListResult {
-  const where: string[] = [];
-  const params: Record<string, string | number> = {};
+  const where: string[] = ['footbar_user_id = @footbar_user_id'];
+  const params: Record<string, string | number> = { footbar_user_id: filters.footbarUserId };
   if (filters.matchType) {
     where.push('match_type = @match_type');
     params.match_type = filters.matchType;
@@ -86,49 +93,61 @@ export function listSessions(filters: SessionListFilters): SessionListResult {
   return {
     count,
     results: rows.flatMap((r) => tryParse<SessionListAPI>(r.list_data) ?? []),
-    last_sync: Number(getSyncState(LAST_SYNC_KEY) ?? 0),
+    last_sync: Number(getSyncState(`${LAST_SYNC_KEY}:${filters.footbarUserId}`) ?? 0),
   };
 }
 
 /** Every cached session list row, newest first (for merged views). */
-export function listAllSessions(matchType?: MatchType): SessionListAPI[] {
+export function listAllSessions(footbarUserId: number, matchType?: MatchType): SessionListAPI[] {
   const rows = (
     matchType
       ? db
-          .prepare('SELECT list_data FROM sessions WHERE match_type = ? ORDER BY start_date DESC')
-          .all(matchType)
-      : db.prepare('SELECT list_data FROM sessions ORDER BY start_date DESC').all()
+          .prepare(
+            'SELECT list_data FROM sessions WHERE footbar_user_id = ? AND match_type = ? ORDER BY start_date DESC',
+          )
+          .all(footbarUserId, matchType)
+      : db
+          .prepare(
+            'SELECT list_data FROM sessions WHERE footbar_user_id = ? ORDER BY start_date DESC',
+          )
+          .all(footbarUserId)
   ) as { list_data: string }[];
   return rows.flatMap((r) => tryParse<SessionListAPI>(r.list_data) ?? []);
 }
 
-export async function getSessionDetail(id: number): Promise<SessionAPI> {
+export async function getSessionDetail(
+  playerId: number,
+  id: number,
+  footbarUserId: number,
+): Promise<SessionAPI> {
   const row = db
-    .prepare('SELECT detail_data, detail_fetched_at FROM sessions WHERE id = ?')
-    .get(id) as { detail_data: string | null; detail_fetched_at: number | null } | undefined;
+    .prepare('SELECT detail_data, detail_fetched_at FROM sessions WHERE id = ? AND footbar_user_id = ?')
+    .get(id, footbarUserId) as { detail_data: string | null; detail_fetched_at: number | null } | undefined;
   if (row?.detail_data) {
     // A corrupt cached detail counts as a miss and is re-fetched below.
     const cached = tryParse<SessionAPI>(row.detail_data);
     if (cached) return cached;
   }
-  const fresh = await fetchSessionDetail(id);
-  const existing = db.prepare('SELECT id FROM sessions WHERE id = ?').get(id) as
+  const fresh = await fetchSessionDetail(playerId, id);
+  const existing = db.prepare('SELECT id FROM sessions WHERE id = ? AND footbar_user_id = ?').get(id, footbarUserId) as
     | { id: number }
     | undefined;
   if (existing) {
     db.prepare(
-      `UPDATE sessions SET detail_data = @detail_data, detail_fetched_at = @detail_fetched_at WHERE id = @id`,
+      `UPDATE sessions SET detail_data = @detail_data, detail_fetched_at = @detail_fetched_at WHERE id = @id AND footbar_user_id = @footbar_user_id`,
     ).run({
       id: fresh.id,
+      footbar_user_id: footbarUserId,
       detail_data: JSON.stringify(fresh),
       detail_fetched_at: Date.now(),
     });
   } else if (fresh.start_date && fresh.match_type) {
     db.prepare(
-      `INSERT INTO sessions (id, start_date, match_type, position, list_data, detail_data, detail_fetched_at)
-       VALUES (@id, @start_date, @match_type, @position, @list_data, @detail_data, @detail_fetched_at)`,
+      `INSERT INTO sessions (id, footbar_user_id, start_date, match_type, position, list_data, detail_data, detail_fetched_at)
+       VALUES (@id, @footbar_user_id, @start_date, @match_type, @position, @list_data, @detail_data, @detail_fetched_at)`,
     ).run({
       id: fresh.id,
+      footbar_user_id: footbarUserId,
       start_date: fresh.start_date,
       match_type: fresh.match_type,
       position: fresh.position ?? null,
@@ -156,16 +175,22 @@ export async function getSessionDetail(id: number): Promise<SessionAPI> {
  * sync the list metadata (start_date/match_type/…) from the fresh result so a
  * session that was later reclassified/retimed in Footbar is fully corrected.
  */
-export async function refreshSessionDetail(id: number): Promise<SessionAPI> {
-  db.prepare('UPDATE sessions SET detail_data = NULL, detail_fetched_at = NULL WHERE id = ?').run(
+export async function refreshSessionDetail(
+  playerId: number,
+  id: number,
+  footbarUserId: number,
+): Promise<SessionAPI> {
+  db.prepare('UPDATE sessions SET detail_data = NULL, detail_fetched_at = NULL WHERE id = ? AND footbar_user_id = ?').run(
     id,
+    footbarUserId,
   );
-  const fresh = await getSessionDetail(id); // detail_data is null -> re-fetches and stores
+  const fresh = await getSessionDetail(playerId, id, footbarUserId); // detail_data is null -> re-fetches and stores
   db.prepare(
     `UPDATE sessions SET start_date = @start_date, match_type = @match_type,
-       position = @position, list_data = @list_data WHERE id = @id`,
+       position = @position, list_data = @list_data WHERE id = @id AND footbar_user_id = @footbar_user_id`,
   ).run({
     id: fresh.id,
+    footbar_user_id: footbarUserId,
     start_date: fresh.start_date,
     match_type: fresh.match_type,
     position: fresh.position ?? null,
@@ -185,6 +210,6 @@ export async function refreshSessionDetail(id: number): Promise<SessionAPI> {
   return fresh;
 }
 
-export function getLastSync(): number {
-  return Number(getSyncState(LAST_SYNC_KEY) ?? 0);
+export function getLastSync(footbarUserId: number): number {
+  return Number(getSyncState(`${LAST_SYNC_KEY}:${footbarUserId}`) ?? 0);
 }

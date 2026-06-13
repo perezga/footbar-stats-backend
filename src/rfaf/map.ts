@@ -22,9 +22,9 @@ function numOrNull(s: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** 'DD-MM-YYYY' → 'YYYY-MM-DD', or null. */
+/** 'DD-MM-YYYY' or 'DD/MM/YYYY' → 'YYYY-MM-DD', or null. */
 function isoDate(s: unknown): string | null {
-  const m = /^(\d{2})-(\d{2})-(\d{4})$/.exec(typeof s === 'string' ? s : '');
+  const m = /^(\d{2})[-/](\d{2})[-/](\d{4})$/.exec(typeof s === 'string' ? s : '');
   return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
 }
 
@@ -258,4 +258,23 @@ export function mapPlayerStats(json: unknown): PlayerStats {
     cards: (g.tarjetas ?? []).map((c) => ({ name: c.nombre, value: num(c.valor) })),
     photo_url: g.image || null,
   };
+}
+
+interface ApiSearchPlayerRow {
+  cod_licencia: string;
+  name: string;
+  nombre_equipo?: string;
+  categoria?: string;
+  image?: string;
+}
+
+export function mapSearchPlayers(json: unknown): RfafSearchResult[] {
+  const players = (Array.isArray(json) ? json : (json as { data?: ApiSearchPlayerRow[] }).data ?? []) as ApiSearchPlayerRow[];
+  return players.map((p) => ({
+    id: p.cod_licencia,
+    name: p.name,
+    team: p.nombre_equipo || '',
+    category: p.categoria || '',
+    image: p.image && p.image !== 'null' ? p.image : null,
+  }));
 }

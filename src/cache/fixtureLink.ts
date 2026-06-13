@@ -1,4 +1,3 @@
-import { env } from '../env.js';
 import type { Position } from '../footbar/types.js';
 import type { Fixture, PlayerMatchEvent } from '../rfaf/types.js';
 import { getFixtures, getPlayerMatches, norm } from './rfaf.js';
@@ -34,6 +33,11 @@ export interface DayFixture {
   captain?: boolean;
 }
 
+export interface FixtureIndex {
+  byDate: Map<string, DayFixture>;
+  all: DayFixture[];
+}
+
 const madridDate = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Europe/Madrid',
   year: 'numeric',
@@ -51,8 +55,9 @@ export function madridDateKey(startDate: string): string | null {
 function toSessionFixture(
   f: Fixture,
   day: Pick<DayFixture, 'events' | 'started' | 'captain'>,
+  ownTeamName: string,
 ): SessionFixture {
-  const isHome = norm(f.home).includes(norm(env.RFAF_OWN_TEAM));
+  const isHome = norm(f.home).includes(norm(ownTeamName));
   return {
     matchday: f.matchday,
     home: f.home,
@@ -76,23 +81,30 @@ function toSessionFixture(
 // request otherwise; a short memo skips the re-parse. Refresh paths call
 // invalidateFixtureIndex() so a manual RFAF refresh shows up immediately.
 const INDEX_TTL_MS = 5 * 60 * 1000;
-let indexMemo: { builtAt: number; index: Map<string, DayFixture> } | null = null;
+const indexMemos = new Map<number, { builtAt: number; index: FixtureIndex }>();
 
-export function invalidateFixtureIndex(): void {
-  indexMemo = null;
+export function invalidateFixtureIndex(playerId?: number): void {
+  if (playerId !== undefined) {
+    indexMemos.delete(playerId);
+  } else {
+    indexMemos.clear();
+  }
 }
 
 /** Map of 'YYYY-MM-DD' → fixture + player events. Empty on RFAF failure. */
-export async function buildFixtureIndex(): Promise<Map<string, DayFixture>> {
-  if (indexMemo && Date.now() - indexMemo.builtAt < INDEX_TTL_MS) return indexMemo.index;
-  const { results } = await getFixtures();
-  const index = new Map<string, DayFixture>();
-  for (const f of results) {
-    if (f.date) index.set(f.date, { fixture: f, events: [] });
+export async function buildFixtureIndex(playerId: number): Promise<FixtureIndex> {
+  const memo = indexMemos.get(playerId);
+  if (memo && Date.now() - memo.builtAt < INDEX_TTL_MS) return memo.index;
+  const { results } = await getFixtures(playerId);
+  const byDate = new Map<string, DayFixture>();
+  const all: DayFixture[] = results.map((f) => ({ fixture: f, events: [] }));
+  for (const day of all) {
+    if (day.fixture.date) byDate.set(day.fixture.date, day);
   }
   try {
-    for (const m of (await getPlayerMatches()).results) {
-      const day = m.date ? index.get(m.date) : undefined;
+    const { results: matches } = await getPlayerMatches(playerId);
+    for (const m of matches) {
+      const day = m.date ? byDate.get(m.date) : undefined;
       if (day) {
         day.events = m.events;
         day.started = m.started;
@@ -102,7 +114,8 @@ export async function buildFixtureIndex(): Promise<Map<string, DayFixture>> {
   } catch {
     // Events are an optional layer; fixtures alone still enrich sessions.
   }
-  indexMemo = { builtAt: Date.now(), index };
+  const index = { byDate, all };
+  indexMemos.set(playerId, { builtAt: Date.now(), index });
   return index;
 }
 
@@ -122,16 +135,18 @@ export interface FixtureOnlySession {
 }
 
 /** Pseudo session-list row for a fixture the tracker didn't record. */
-export function fixtureOnlySession(date: string, day: DayFixture): FixtureOnlySession {
+export function fixtureOnlySession(date: string | null, day: DayFixture, ownTeamName: string): FixtureOnlySession {
   const f = day.fixture;
-  const start = `${date}T${f.time ?? '00:00'}:00`;
+  // Fallback for dateless upcoming matches: sort to the top (descending) by using 9999 year.
+  const sortDate = date || `9999-01-${String(f.matchday).padStart(2, '0')}`;
+  const start = `${sortDate}T${f.time ?? '00:00'}:00`;
   return {
     id: null,
     start_date: start,
     stop_date: start,
     title: fixtureName(f),
     match_type: '11',
-    fixture: toSessionFixture(f, day),
+    fixture: toSessionFixture(f, day, ownTeamName),
   };
 }
 
@@ -203,6 +218,7 @@ export function combineLegRows<
 export function enrichSession<T extends { start_date: string; match_type: string; title: string }>(
   session: T,
   index: Map<string, DayFixture>,
+  ownTeamName: string,
 ): T & { fixture?: SessionFixture } {
   if (session.match_type !== '11') return session;
   const key = madridDateKey(session.start_date);
@@ -211,6 +227,6 @@ export function enrichSession<T extends { start_date: string; match_type: string
   return {
     ...session,
     title: fixtureName(day.fixture),
-    fixture: toSessionFixture(day.fixture, day),
+    fixture: toSessionFixture(day.fixture, day, ownTeamName),
   };
 }
