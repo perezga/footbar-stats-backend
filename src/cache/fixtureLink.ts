@@ -1,4 +1,4 @@
-import type { Position } from '../footbar/types.js';
+import type { Position, SessionAPI } from '../footbar/types.js';
 import type { Fixture, PlayerMatchEvent } from '../rfaf/types.js';
 import { getFixtures, getPlayerMatches, norm } from './rfaf.js';
 
@@ -125,17 +125,18 @@ function fixtureName(f: Fixture): string {
 }
 
 /** A fixture with no Footbar session, shaped like a session list row (id null). */
-export interface FixtureOnlySession {
+export interface FixtureOnlySession extends Omit<SessionAPI, 'id' | 'location'> {
   id: null;
-  start_date: string;
-  stop_date: string;
-  title: string;
-  match_type: '11';
+  location: null;
   fixture: SessionFixture;
 }
 
 /** Pseudo session-list row for a fixture the tracker didn't record. */
-export function fixtureOnlySession(date: string | null, day: DayFixture, ownTeamName: string): FixtureOnlySession {
+export function fixtureOnlySession(
+  date: string | null,
+  day: DayFixture,
+  ownTeamName: string,
+): FixtureOnlySession {
   const f = day.fixture;
   // Fallback for dateless upcoming matches: sort to the top (descending) by using 9999 year.
   const sortDate = date || `9999-01-${String(f.matchday).padStart(2, '0')}`;
@@ -146,6 +147,25 @@ export function fixtureOnlySession(date: string | null, day: DayFixture, ownTeam
     stop_date: start,
     title: fixtureName(f),
     match_type: '11',
+    location: null,
+    playing_time: 0,
+    distance: 0,
+    pass_count: 0,
+    shot_count: 0,
+    shot_speed: 0,
+    avg_shot_speed: 0,
+    dribble_count: 0,
+    time_with_ball: 0,
+    activity: 0,
+    time_running: 0,
+    run_count: 0,
+    sprint_count: 0,
+    avg_sprint_speed: 0,
+    sprint_speed: 0,
+    hsr_plus: 0,
+    stop_and_go: 0,
+    acceleration: 0,
+    distance_5min: [],
     fixture: toSessionFixture(f, day, ownTeamName),
   };
 }
