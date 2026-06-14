@@ -464,11 +464,16 @@ export async function computeAdvancedMetrics(
     goalContribution = (ownGoals / ownTeam.goals_for) * 100;
   }
 
-  // 2. Clutch Factor % (Goals in last 15 min / Total Goals)
+  // 2. Clutch Factor % (Goals in last quarter / Total Goals)
   let clutchFactor = null;
+  const is7v7 = ['alevin', 'benjamin', 'prebenjamin'].some(c => 
+    rfafStats.results.category.toLowerCase().includes(c)
+  );
+  const clutchThreshold = is7v7 ? 45 : 75;
+
   if (ownGoals > 0) {
     const clutchGoals = rfafMatches.results.reduce(
-      (sum, m) => sum + m.events.filter((e) => e.kind === 'goal' && (e.minute ?? 0) >= 75).length,
+      (sum, m) => sum + m.events.filter((e) => e.kind === 'goal' && (e.minute ?? 0) >= clutchThreshold).length,
       0,
     );
     clutchFactor = (clutchGoals / ownGoals) * 100;
