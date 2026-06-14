@@ -123,18 +123,30 @@ export async function sessionRoutes(app: FastifyInstance): Promise<void> {
 
   app.get<{ Params: { id: string } }>('/api/sessions/:id', async (req, reply) => {
     if (!req.playerId) return reply.status(400).send({ error: 'Player context required' });
-    const id = Number(req.params.id);
+    
+    const idParam = req.params.id;
+    const index = await safeFixtureIndex(app, req.playerId);
+    const player = db.prepare('SELECT rfaf_own_team FROM players WHERE id = ?').get(req.playerId) as
+      | { rfaf_own_team: string }
+      | undefined;
+    const ownTeamName = player?.rfaf_own_team ?? '';
+
+    // 1. Handle date-based pseudo-session (RFAF-only)
+    if (idParam.startsWith('date:')) {
+      const date = idParam.slice(5);
+      const day = index.byDate.get(date);
+      if (!day) return reply.status(404).send({ error: 'Fixture not found' });
+      return fixtureOnlySession(date, day, ownTeamName);
+    }
+
+    // 2. Handle standard Footbar session
+    const id = Number(idParam);
     if (!Number.isFinite(id)) {
       reply.code(400);
       return { error: 'Invalid id' };
     }
     if (!req.userId) return reply.status(404).send({ error: 'Session not found' });
     const detail = await getSessionDetail(req.playerId, id, req.userId);
-    const index = await safeFixtureIndex(app, req.playerId);
-    const player = db.prepare('SELECT rfaf_own_team FROM players WHERE id = ?').get(req.playerId) as
-      | { rfaf_own_team: string }
-      | undefined;
-    const ownTeamName = player?.rfaf_own_team ?? '';
     return enrichSession(detail, index.byDate, ownTeamName);
   });
 
